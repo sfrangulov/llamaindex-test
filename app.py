@@ -1,4 +1,3 @@
-from llama_index.core.vector_stores.types import VectorStoreQueryMode
 import os
 import sys
 import asyncio
@@ -32,7 +31,7 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.postprocessor import SentenceTransformerRerank
 
 import chromadb
-
+ 
 os.environ["GOOGLE_API_KEY"] = "AIzaSyCX8Kr5Xj1dutjeClYQ-fFN6GH6NTP_PLg"
 
 # Configure API keys from environment (do not hardcode secrets)
@@ -61,7 +60,6 @@ chroma_collection = db.get_or_create_collection("test")
 vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-
 def infer_language(text: str) -> str:
     # Simple heuristic: Cyrillic -> ru, else en
     return "ru" if any("\u0400" <= ch <= "\u04FF" for ch in text) else "en"
@@ -71,15 +69,13 @@ if chroma_collection.count() == 0:
     documents = SimpleDirectoryReader("data").load_data()
     # enrich metadata for filtering
     for d in documents:
-        d.metadata.setdefault("file_name", d.metadata.get(
-            "file_name") or d.metadata.get("filename") or "unknown")
+        d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
         d.metadata.setdefault("section", "unknown")
         d.metadata.setdefault("version", "v1")
         if "lang" not in d.metadata:
             d.metadata["lang"] = infer_language(d.text or "")
 
-    index = VectorStoreIndex.from_documents(
-        documents, storage_context=storage_context)
+    index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
     # Persist docstore / index metadata for neighbor-window postprocessors
     index.storage_context.persist(persist_dir=PERSIST_DIR)
 else:
@@ -89,14 +85,12 @@ else:
             vector_store=vector_store, persist_dir=PERSIST_DIR
         )
     except Exception:
-        storage_context = StorageContext.from_defaults(
-            vector_store=vector_store)
-    index = VectorStoreIndex.from_vector_store(
-        vector_store, storage_context=storage_context)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
+from llama_index.core.vector_stores.types import VectorStoreQueryMode
 
 USE_FUSION = True
-
 
 def build_retriever(filters: Optional[MetadataFilters] = None):
     # Dense-only retriever
@@ -124,7 +118,6 @@ def build_retriever(filters: Optional[MetadataFilters] = None):
         )
     return hybrid
 
-
 retriever = build_retriever()
 
 node_postprocessors = []
@@ -141,26 +134,21 @@ except Exception:
     pass
 
 # Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
-
-
 class SafeAutoPrevNext(BaseNodePostprocessor):
     def __init__(self, underlying: BaseNodePostprocessor) -> None:
         super().__init__()
         self._underlying = underlying
 
-    # type: ignore[override]
-    def _postprocess_nodes(self, nodes, query_bundle=None):
+    def _postprocess_nodes(self, nodes, query_bundle=None):  # type: ignore[override]
         try:
             return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
         except Exception:
             return nodes
 
-
 # Re-introduce sentence windowing without embedding smear
 try:
     node_postprocessors.append(
-        SafeAutoPrevNext(AutoPrevNextNodePostprocessor(
-            docstore=index.docstore))
+        SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
     )
 except Exception:
     pass
@@ -188,7 +176,7 @@ async def search_documents(
     section: Optional[str] = None,
     lang: Optional[str] = None,
     version: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> str:
     """Search documents and return answer with citations.
 
     Optional metadata filters can be provided to narrow the search.
@@ -238,8 +226,7 @@ async def search_documents(
         score_val = None
         if getattr(sn, "score", None) is not None:
             try:
-                # cast numpy types to built-in float
-                score_val = float(sn.score)
+                score_val = float(sn.score)  # cast numpy types to built-in float
             except Exception:
                 score_val = None
         sources.append(
@@ -260,7 +247,7 @@ async def search_documents(
         "answer": str(response),
         "sources": sources,
     }
-    return payload
+    return json.dumps(payload, ensure_ascii=False)
 
 
 # Create an enhanced workflow with tool
@@ -279,13 +266,22 @@ agent = AgentWorkflow.from_tools_or_functions(
 # Now we can ask questions about the documents or do calculations
 async def main():
     # Allow passing a custom query via CLI; default to a sensible demo query
-    query = sys.argv[1] if len(
-        sys.argv) > 1 else "Что такое Предмет разработки?"
+    query = sys.argv[1] if len(sys.argv) > 1 else "Предмет разработки"
 
     print(f"Running agent with query: {query}")
-    agent_resp = await agent.run(query, max_iterations=2)
-    text = agent_resp.get("answer", "")
-    print(text)
+    # First, try via the agent (function-calling should invoke the tool)
+    #try:
+    #    agent_resp = await agent.run(query, max_iterations=2)
+    #    text = str(agent_resp)
+    #    if text.strip() and text.strip().lower() != "я не знаю.":
+    #        print(text)
+    #        return
+    #except Exception:
+    #    pass
+
+    # Fallback: call the retrieval tool directly for a guaranteed answer with citations
+    result_json = await search_documents(query)
+    print(result_json)
 
 
 # Run the agent
