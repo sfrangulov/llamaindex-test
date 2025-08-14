@@ -19,7 +19,6 @@ from llama_index.core.query_engine import RetrieverQueryEngine, TransformQueryEn
 from llama_index.core.schema import MetadataMode
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.core.postprocessor import (
-    AutoPrevNextNodePostprocessor,
     LongContextReorder,
     SimilarityPostprocessor,
     SentenceTransformerRerank,
@@ -96,25 +95,24 @@ retriever = index.as_retriever(
     hybrid_top_k=40,
 )
 
-node_postprocessors = [
-    # Provide neighboring context without expanding embeddings
-    AutoPrevNextNodePostprocessor(docstore=index.docstore),
-    # Drop weak matches early to tighten precision
-    SimilarityPostprocessor(similarity_cutoff=0.2),
-    # Place salient chunks near the beginning/end for long prompts
-    LongContextReorder(),
-]
+node_postprocessors = []
 
-# Cross-encoder rerank for precision boost (if dependency is present)
+# Cross-encoder rerank first for precision
 try:
     if SentenceTransformerRerank is not None:
         node_postprocessors.append(
             SentenceTransformerRerank(
-                top_n=8, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
+                top_n=12, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
             )
         )
 except Exception:
     pass
+
+# Light or no similarity cutoff to avoid over-pruning
+node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
+
+# Place salient chunks near the beginning/end for long prompts
+node_postprocessors.append(LongContextReorder())
 
 base_query_engine = RetrieverQueryEngine(
     retriever=retriever,
@@ -198,10 +196,10 @@ agent = AgentWorkflow.from_tools_or_functions(
     [search_documents],
     llm=Settings.llm,
     system_prompt=(
-        "You are a precise, concise assistant."
-        " Answer only from the provided documents."
-        " If unsure, say you don't know."
-        " Always prefer exact quotes and include citations."
+        "Ты — ассистент для поиска по локальным документам. "
+        "Всегда используй инструмент search_documents для ответа и не отвечай без него. "
+        "Отвечай кратко, опираясь только на найденные фрагменты. Если результатов нет — скажи, что не знаешь. "
+        "В ответе используй точные цитаты и добавляй ссылки на источники из результатов инструмента."
     ),
 )
 
@@ -209,8 +207,8 @@ agent = AgentWorkflow.from_tools_or_functions(
 # Now we can ask questions about the documents or do calculations
 async def main():
     # Example question; adjust as needed
-    response = await agent.run("Предмет разработки")
-    print(response)
+    result_json = await search_documents("Предмет разработки")
+    print(result_json)
 
 
 # Run the agent
