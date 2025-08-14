@@ -206,8 +206,21 @@ agent = AgentWorkflow.from_tools_or_functions(
 
 # Now we can ask questions about the documents or do calculations
 async def main():
-    # Example question; adjust as needed
-    result_json = await search_documents("Предмет разработки")
+    # Allow passing a custom query via CLI; default to a sensible demo query
+    query = sys.argv[1] if len(sys.argv) > 1 else "Предмет разработки"
+
+    # First, try via the agent (function-calling should invoke the tool)
+    try:
+        agent_resp = await agent.run(query, max_iterations=2)
+        text = str(agent_resp)
+        if text.strip() and text.strip().lower() != "я не знаю.":
+            print(text)
+            return
+    except Exception:
+        pass
+
+    # Fallback: call the retrieval tool directly for a guaranteed answer with citations
+    result_json = await search_documents(query)
     print(result_json)
 
 
