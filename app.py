@@ -1,21 +1,28 @@
 import os
+import sys
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings, StorageContext
 from llama_index.core.agent.workflow import AgentWorkflow
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core import StorageContext
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.core.indices.query.query_transform import HyDEQueryTransform
 import asyncio
 import chromadb
+# import logging
+
+# logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+# logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
+
+os.environ["GOOGLE_API_KEY"] = "AIzaSyCX8Kr5Xj1dutjeClYQ-fFN6GH6NTP_PLg"
 
 # Settings control global defaults
-Settings.embed_model = HuggingFaceEmbedding(
-    model_name="Qwen/Qwen3-Embedding-0.6B")
-Settings.llm = Ollama(
-    model="qwen3:0.6b",
-    request_timeout=360.0,
-    # Manually set the context window to limit memory usage
-    context_window=8000,
+Settings.embed_model = GoogleGenAIEmbedding(
+    model_name="text-embedding-004",
+    embed_batch_size=100
+)
+Settings.llm = GoogleGenAI(
+    model="gemini-2.5-flash",
 )
 
 # Create the document index
@@ -58,7 +65,7 @@ agent = AgentWorkflow.from_tools_or_functions(
 # Now we can ask questions about the documents or do calculations
 async def main():
     response = await agent.run(
-        "Какие разделы не обязательны для заполнения в функциональной спецификации? Используй только информацию из документов, не основывайся на собственных знаниях."
+        "Оглавление"
     )
     print(response)
 
