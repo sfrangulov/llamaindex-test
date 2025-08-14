@@ -1,6 +1,3 @@
-chroma_db/
-data
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -204,4 +201,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
 .DS_Store
+chroma_db/
+data/
+storage/

@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import (
@@ -26,18 +27,8 @@ from llama_index.core.postprocessor import (
 )
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.retrievers import QueryFusionRetriever
-# Try multiple import paths for cross-encoder reranker depending on LI version
-try:
-    # Modern path
-    from llama_index.postprocessor import SentenceTransformerRerank  # type: ignore
-except Exception:
-    try:
-        # Legacy path
-        from llama_index.postprocessor.sentence_transformer_rerank import (  # type: ignore
-            SentenceTransformerRerank,
-        )
-    except Exception:  # pragma: no cover - optional dependency
-        SentenceTransformerRerank = None  # type: ignore
+
+from llama_index.core.postprocessor import SentenceTransformerRerank
 
 import chromadb
  
@@ -243,8 +234,8 @@ async def search_documents(
             }
         )
 
-    import json
-
+    print(f"Found {len(sources)} sources for query: {query}")
+    print(f"Response: {response}")
     payload: Dict[str, Any] = {
         "answer": str(response),
         "sources": sources,
@@ -270,15 +261,16 @@ async def main():
     # Allow passing a custom query via CLI; default to a sensible demo query
     query = sys.argv[1] if len(sys.argv) > 1 else "Предмет разработки"
 
+    print(f"Running agent with query: {query}")
     # First, try via the agent (function-calling should invoke the tool)
-    try:
-        agent_resp = await agent.run(query, max_iterations=2)
-        text = str(agent_resp)
-        if text.strip() and text.strip().lower() != "я не знаю.":
-            print(text)
-            return
-    except Exception:
-        pass
+    #try:
+    #    agent_resp = await agent.run(query, max_iterations=2)
+    #    text = str(agent_resp)
+    #    if text.strip() and text.strip().lower() != "я не знаю.":
+    #        print(text)
+    #        return
+    #except Exception:
+    #    pass
 
     # Fallback: call the retrieval tool directly for a guaranteed answer with citations
     result_json = await search_documents(query)
