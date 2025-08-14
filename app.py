@@ -25,6 +25,7 @@ from llama_index.core.postprocessor import (
     SentenceTransformerRerank,
 )
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
+from llama_index.core.retrievers import QueryFusionRetriever
 # Try multiple import paths for cross-encoder reranker depending on LI version
 try:
     # Modern path
@@ -98,14 +99,35 @@ else:
 
 from llama_index.core.vector_stores.types import VectorStoreQueryMode
 
-# Base retriever (attempt hybrid if supported by the vector store)
-retriever = index.as_retriever(
-    similarity_top_k=40,
-    vector_store_query_mode=VectorStoreQueryMode.HYBRID,
-    alpha=0.35,  # boost keyword/sparse; ignored if store doesn't support hybrid
-    sparse_top_k=40,
-    hybrid_top_k=40,
-)
+USE_FUSION = True
+
+def build_retriever(filters: Optional[MetadataFilters] = None):
+    # Dense-only retriever
+    dense = index.as_retriever(
+        similarity_top_k=40,
+        vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
+        filters=filters,
+    )
+    # Hybrid retriever (if backend supports sparse)
+    hybrid = index.as_retriever(
+        similarity_top_k=40,
+        vector_store_query_mode=VectorStoreQueryMode.HYBRID,
+        alpha=0.35,
+        sparse_top_k=40,
+        hybrid_top_k=40,
+        filters=filters,
+    )
+    if USE_FUSION:
+        return QueryFusionRetriever(
+            retrievers=[dense, hybrid],
+            similarity_top_k=40,
+            num_queries=3,
+            mode="reciprocal_rerank",
+            use_async=True,
+        )
+    return hybrid
+
+retriever = build_retriever()
 
 node_postprocessors = []
 
@@ -182,14 +204,7 @@ async def search_documents(
     engine = query_engine
     if filters:
         # Rebuild retriever with metadata filters
-        filtered_retriever = index.as_retriever(
-            similarity_top_k=40,
-            vector_store_query_mode=VectorStoreQueryMode.HYBRID,
-            alpha=0.35,
-            sparse_top_k=40,
-            hybrid_top_k=40,
-            filters=MetadataFilters(filters=filters),
-        )
+        filtered_retriever = build_retriever(MetadataFilters(filters=filters))
         filtered_engine = RetrieverQueryEngine(
             retriever=filtered_retriever,
             node_postprocessors=node_postprocessors,
@@ -197,6 +212,20 @@ async def search_documents(
         engine = TransformQueryEngine(filtered_engine, hyde)
 
     response = await engine.aquery(query)
+    # Fallback: if empty, retry with dense-only retriever without fusion
+    if not str(response).strip() or not getattr(response, "source_nodes", None):
+        fallback_retriever = index.as_retriever(
+            similarity_top_k=40,
+            vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
+            filters=MetadataFilters(filters=filters) if filters else None,
+        )
+        fallback_engine = TransformQueryEngine(
+            RetrieverQueryEngine(
+                retriever=fallback_retriever, node_postprocessors=node_postprocessors
+            ),
+            hyde,
+        )
+        response = await fallback_engine.aquery(query)
 
     # Build citation structure
     sources = []
