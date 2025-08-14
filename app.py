@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import asyncio
 import json
 from typing import Any, Dict, List, Optional
@@ -27,25 +28,26 @@ from llama_index.core.postprocessor import (
 )
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.retrievers import QueryFusionRetriever
-
-from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.retrievers.bm25 import BM25Retriever
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
  
 os.environ["GOOGLE_API_KEY"] = "AIzaSyCX8Kr5Xj1dutjeClYQ-fFN6GH6NTP_PLg"
 
-# Configure API keys from environment (do not hardcode secrets)
-if not os.environ.get("GOOGLE_API_KEY"):
-    # Fail fast with a clear message; user must export GOOGLE_API_KEY
-    print("ERROR: GOOGLE_API_KEY is not set. Export it in your shell before running.")
-    # Avoid raising during import when used as a library; only exit if run as script
-    if __name__ == "__main__":
-        sys.exit(1)
+# Keep a hardcoded API key per request. No hard failure if env is missing.
 
 # Settings control global defaults
+# Speed/quality defaults (tunable via env if needed)
+LIGHT_IMPORT = os.getenv("APP_LIGHT_IMPORT") == "1"
+TOP_K = int(os.getenv("TOP_K", 15))
+USE_FUSION = os.getenv("USE_FUSION", "false").lower() in {"1", "true", "yes"}
+USE_HYDE = os.getenv("USE_HYDE", "false").lower() in {"1", "true", "yes"}
+USE_RERANK = os.getenv("USE_RERANK", "false").lower() in {"1", "true", "yes"}
+
 Settings.embed_model = GoogleGenAIEmbedding(
     model_name="text-embedding-004",
-    embed_batch_size=100,
+    embed_batch_size=256,
 )
 Settings.llm = GoogleGenAI(
     model="gemini-2.5-flash",
@@ -53,85 +55,132 @@ Settings.llm = GoogleGenAI(
 )
 Settings.node_parser = SentenceSplitter(chunk_size=700, chunk_overlap=120)
 
-# Create the document index
-db = chromadb.PersistentClient(path="./chroma_db")
-PERSIST_DIR = "./storage"
-chroma_collection = db.get_or_create_collection("test")
-vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
+if not LIGHT_IMPORT:
+    # Create the document index
+    db = chromadb.PersistentClient(
+        path="./chroma_db",
+        settings=ChromaSettings(anonymized_telemetry=False)
+    )
+    PERSIST_DIR = "./storage"
+    chroma_collection = db.get_or_create_collection("test")
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
 def infer_language(text: str) -> str:
     # Simple heuristic: Cyrillic -> ru, else en
     return "ru" if any("\u0400" <= ch <= "\u04FF" for ch in text) else "en"
 
 
-if chroma_collection.count() == 0:
+if not LIGHT_IMPORT:
+    if chroma_collection.count() == 0:
+        documents = SimpleDirectoryReader("data").load_data()
+        # enrich metadata for filtering
+        for d in documents:
+            d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
+            d.metadata.setdefault("section", "unknown")
+            d.metadata.setdefault("version", "v1")
+            if "lang" not in d.metadata:
+                d.metadata["lang"] = infer_language(d.text or "")
+
+        index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+        # Persist docstore / index metadata for neighbor-window postprocessors
+        index.storage_context.persist(persist_dir=PERSIST_DIR)
+    else:
+        # Load persisted docstore if available so neighbor-window can resolve nodes
+        try:
+            storage_context = StorageContext.from_defaults(
+                vector_store=vector_store, persist_dir=PERSIST_DIR
+            )
+        except Exception:
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
+
+from llama_index.core.vector_stores.types import VectorStoreQueryMode
+
+_bm25_retriever: Optional[BM25Retriever] = None
+_bm25_nodes_cache: Optional[List[Any]] = None
+
+
+def _load_nodes_for_bm25() -> List[Any]:
+    # Build nodes from documents via the configured node parser
     documents = SimpleDirectoryReader("data").load_data()
-    # enrich metadata for filtering
     for d in documents:
         d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
         d.metadata.setdefault("section", "unknown")
         d.metadata.setdefault("version", "v1")
         if "lang" not in d.metadata:
             d.metadata["lang"] = infer_language(d.text or "")
+    return Settings.node_parser.get_nodes_from_documents(documents)
 
-    index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
-    # Persist docstore / index metadata for neighbor-window postprocessors
-    index.storage_context.persist(persist_dir=PERSIST_DIR)
-else:
-    # Load persisted docstore if available so neighbor-window can resolve nodes
-    try:
-        storage_context = StorageContext.from_defaults(
-            vector_store=vector_store, persist_dir=PERSIST_DIR
-        )
-    except Exception:
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
-from llama_index.core.vector_stores.types import VectorStoreQueryMode
+def _filter_nodes(nodes: List[Any], filters: Optional[MetadataFilters]) -> List[Any]:
+    if not filters or not getattr(filters, "filters", None):
+        return nodes
+    result = []
+    for n in nodes:
+        meta = getattr(n, "metadata", {}) or getattr(getattr(n, "node", None), "metadata", {}) or {}
+        ok = True
+        for f in filters.filters:
+            if meta.get(f.key) != f.value:
+                ok = False
+                break
+        if ok:
+            result.append(n)
+    return result
 
-USE_FUSION = True
+
+def _get_bm25_retriever(filters: Optional[MetadataFilters]) -> BM25Retriever:
+    global _bm25_retriever, _bm25_nodes_cache
+    if _bm25_nodes_cache is None:
+        _bm25_nodes_cache = _load_nodes_for_bm25()
+    nodes = _filter_nodes(_bm25_nodes_cache, filters)
+    # Build a new retriever if filters subset changes size notably; simple approach: build per call
+    return BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=TOP_K)
+
 
 def build_retriever(filters: Optional[MetadataFilters] = None):
     # Dense-only retriever
+    if LIGHT_IMPORT:
+        return None  # not used in tests
     dense = index.as_retriever(
-        similarity_top_k=40,
+        similarity_top_k=TOP_K,
         vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
         filters=filters,
     )
-    # Hybrid retriever (if backend supports sparse)
-    hybrid = index.as_retriever(
-        similarity_top_k=40,
-        vector_store_query_mode=VectorStoreQueryMode.HYBRID,
-        alpha=0.35,
-        sparse_top_k=40,
-        hybrid_top_k=40,
-        filters=filters,
-    )
+    # Real hybrid: BM25 (sparse) + dense with reciprocal rerank
     if USE_FUSION:
+        bm25 = _get_bm25_retriever(filters)
         return QueryFusionRetriever(
-            retrievers=[dense, hybrid],
-            similarity_top_k=40,
-            num_queries=3,
+            retrievers=[dense, bm25],
+            similarity_top_k=TOP_K,
+            num_queries=1,
             mode="reciprocal_rerank",
             use_async=True,
         )
-    return hybrid
+    return dense
 
 retriever = build_retriever()
 
 node_postprocessors = []
 
 # Cross-encoder rerank first for precision
-try:
-    if SentenceTransformerRerank is not None:
-        node_postprocessors.append(
-            SentenceTransformerRerank(
-                top_n=12, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
+def _compute_rerank_top_n(top_k: int, use_rerank: bool) -> Optional[int]:
+    if not use_rerank:
+        return None
+    return min(12, max(1, top_k))
+
+
+if USE_RERANK and not LIGHT_IMPORT:
+    try:
+        top_n = _compute_rerank_top_n(TOP_K, USE_RERANK)
+        if top_n and SentenceTransformerRerank is not None:
+            node_postprocessors.append(
+                SentenceTransformerRerank(
+                    top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
+                )
             )
-        )
-except Exception:
-    pass
+    except Exception:
+        pass
 
 # Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
 class SafeAutoPrevNext(BaseNodePostprocessor):
@@ -159,14 +208,84 @@ node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
 # Place salient chunks near the beginning/end for long prompts
 node_postprocessors.append(LongContextReorder())
 
-base_query_engine = RetrieverQueryEngine(
-    retriever=retriever,
-    node_postprocessors=node_postprocessors,
-)
+if not LIGHT_IMPORT:
+    base_query_engine = RetrieverQueryEngine(
+        retriever=retriever,
+        node_postprocessors=node_postprocessors,
+        # response_mode="compact",
+    )
 
 # Query transforms: HyDE (+ optional user paraphrase in future)
 hyde = HyDEQueryTransform(include_original=True)
-query_engine = TransformQueryEngine(base_query_engine, hyde)
+if not LIGHT_IMPORT:
+    query_engine = (
+        TransformQueryEngine(base_query_engine, hyde) if USE_HYDE else base_query_engine
+    )
+else:
+    query_engine = None
+
+
+def _make_engine_with_filters(filters: Optional[List[ExactMatchFilter]]):
+    if not filters:
+        return query_engine
+    filtered_retriever = build_retriever(MetadataFilters(filters=filters))
+    filtered_engine = RetrieverQueryEngine(
+        retriever=filtered_retriever,
+        node_postprocessors=node_postprocessors,
+        response_mode="compact",
+    )
+    return TransformQueryEngine(filtered_engine, hyde) if USE_HYDE else filtered_engine
+
+
+def _make_filters(
+    *, file_name: Optional[str], section: Optional[str], lang: Optional[str], version: Optional[str]
+) -> List[ExactMatchFilter]:
+    filters: List[ExactMatchFilter] = []
+    if file_name:
+        filters.append(ExactMatchFilter(key="file_name", value=file_name))
+    if section:
+        filters.append(ExactMatchFilter(key="section", value=section))
+    if lang:
+        filters.append(ExactMatchFilter(key="lang", value=lang))
+    if version:
+        filters.append(ExactMatchFilter(key="version", value=version))
+    return filters
+
+
+def _build_sources(response) -> List[Dict[str, Any]]:
+    sources: List[Dict[str, Any]] = []
+    for sn in getattr(response, "source_nodes", []) or []:
+        meta = sn.node.metadata or {}
+        try:
+            score_val = float(sn.score) if getattr(sn, "score", None) is not None else None
+        except Exception:
+            score_val = None
+        sources.append(
+            {
+                "score": score_val,
+                "file_name": meta.get("file_name") or meta.get("filename"),
+                "section": meta.get("section"),
+                "lang": meta.get("lang"),
+                "version": meta.get("version"),
+                "window": meta.get("window"),
+                "text": sn.node.get_content(metadata_mode=MetadataMode.NONE),
+            }
+        )
+    return sources
+
+
+def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
+    fallback_retriever = index.as_retriever(
+        similarity_top_k=TOP_K,
+        vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
+        filters=MetadataFilters(filters=filters) if filters else None,
+    )
+    base = RetrieverQueryEngine(
+        retriever=fallback_retriever,
+        node_postprocessors=node_postprocessors,
+        response_mode="compact",
+    )
+    return TransformQueryEngine(base, hyde) if USE_HYDE else base
 
 
 async def search_documents(
@@ -182,66 +301,21 @@ async def search_documents(
     Optional metadata filters can be provided to narrow the search.
     In production, prefer to return a structured object; here we JSON-encode for the agent.
     """
-    filters: List[ExactMatchFilter] = []
-    if file_name:
-        filters.append(ExactMatchFilter(key="file_name", value=file_name))
-    if section:
-        filters.append(ExactMatchFilter(key="section", value=section))
-    if lang:
-        filters.append(ExactMatchFilter(key="lang", value=lang))
-    if version:
-        filters.append(ExactMatchFilter(key="version", value=version))
+    filters = _make_filters(file_name=file_name, section=section, lang=lang, version=version)
 
-    engine = query_engine
-    if filters:
-        # Rebuild retriever with metadata filters
-        filtered_retriever = build_retriever(MetadataFilters(filters=filters))
-        filtered_engine = RetrieverQueryEngine(
-            retriever=filtered_retriever,
-            node_postprocessors=node_postprocessors,
-        )
-        engine = TransformQueryEngine(filtered_engine, hyde)
-
+    engine = _make_engine_with_filters(filters)
+    t0 = time.time()
     response = await engine.aquery(query)
+    t_retrieve_llm = time.time() - t0
     # Fallback: if empty, retry with dense-only retriever without fusion
     if not str(response).strip() or not getattr(response, "source_nodes", None):
-        fallback_retriever = index.as_retriever(
-            similarity_top_k=40,
-            vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
-            filters=MetadataFilters(filters=filters) if filters else None,
-        )
-        fallback_engine = TransformQueryEngine(
-            RetrieverQueryEngine(
-                retriever=fallback_retriever, node_postprocessors=node_postprocessors
-            ),
-            hyde,
-        )
-        response = await fallback_engine.aquery(query)
+        response = await _make_fallback_engine(filters).aquery(query)
 
     # Build citation structure
-    sources = []
-    for sn in getattr(response, "source_nodes", []) or []:
-        meta = sn.node.metadata or {}
-        # Ensure score is JSON-serializable (numpy.float32 -> float)
-        score_val = None
-        if getattr(sn, "score", None) is not None:
-            try:
-                score_val = float(sn.score)  # cast numpy types to built-in float
-            except Exception:
-                score_val = None
-        sources.append(
-            {
-                "score": score_val,
-                "file_name": meta.get("file_name") or meta.get("filename"),
-                "section": meta.get("section"),
-                "lang": meta.get("lang"),
-                "version": meta.get("version"),
-                "window": meta.get("window"),
-                "text": sn.node.get_content(metadata_mode=MetadataMode.NONE),
-            }
-        )
+    sources = _build_sources(response)
 
     print(f"Found {len(sources)} sources for query: {query}")
+    print(f"Latency: {t_retrieve_llm:.2f}s (retrieval+LLM)")
     print(f"Response: {response}")
     payload: Dict[str, Any] = {
         "answer": str(response),
@@ -250,17 +324,20 @@ async def search_documents(
     return json.dumps(payload, ensure_ascii=False)
 
 
-# Create an enhanced workflow with tool
-agent = AgentWorkflow.from_tools_or_functions(
-    [search_documents],
-    llm=Settings.llm,
-    system_prompt=(
-        "Ты — ассистент для поиска по локальным документам. "
-        "Всегда используй инструмент search_documents для ответа и не отвечай без него. "
-        "Отвечай кратко, опираясь только на найденные фрагменты. Если результатов нет — скажи, что не знаешь. "
-        "В ответе используй точные цитаты и добавляй ссылки на источники из результатов инструмента."
-    ),
-)
+# Optional agent wrapper (disabled by default to reduce latency)
+AGENT_ENABLED = os.getenv("AGENT_ENABLED", "false").lower() in {"1", "true", "yes"}
+agent = None
+if AGENT_ENABLED and not LIGHT_IMPORT:
+    agent = AgentWorkflow.from_tools_or_functions(
+        [search_documents],
+        llm=Settings.llm,
+        system_prompt=(
+            "Ты — ассистент для поиска по локальным документам. "
+            "Всегда используй инструмент search_documents для ответа и не отвечай без него. "
+            "Отвечай кратко, опираясь только на найденные фрагменты. Если результатов нет — скажи, что не знаешь. "
+            "В ответе используй точные цитаты и добавляй ссылки на источники из результатов инструмента."
+        ),
+    )
 
 
 # Now we can ask questions about the documents or do calculations
@@ -268,18 +345,18 @@ async def main():
     # Allow passing a custom query via CLI; default to a sensible demo query
     query = sys.argv[1] if len(sys.argv) > 1 else "Предмет разработки"
 
-    print(f"Running agent with query: {query}")
-    # First, try via the agent (function-calling should invoke the tool)
-    #try:
-    #    agent_resp = await agent.run(query, max_iterations=2)
-    #    text = str(agent_resp)
-    #    if text.strip() and text.strip().lower() != "я не знаю.":
-    #        print(text)
-    #        return
-    #except Exception:
-    #    pass
+    print(f"Running with query: {query}")
+    if AGENT_ENABLED and agent is not None:
+        try:
+            agent_resp = await agent.run(query, max_iterations=1)
+            text = str(agent_resp)
+            if text.strip() and text.strip().lower() != "я не знаю.":
+                print(text)
+                return
+        except Exception:
+            pass
 
-    # Fallback: call the retrieval tool directly for a guaranteed answer with citations
+    # Default path: call the retrieval tool directly for a fast answer with citations
     result_json = await search_documents(query)
     print(result_json)
 

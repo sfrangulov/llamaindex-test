@@ -17,6 +17,12 @@ Quick start
 
 ```zsh
 export GOOGLE_API_KEY="<your_key>"
+# Optional toggles (defaults shown)
+export TOP_K=15
+export USE_FUSION=false   # enable to try multi-retriever reciprocal rerank
+export USE_HYDE=false     # enable synthetic query expansion (adds LLM latency)
+export USE_RERANK=false   # enable cross-encoder reranker (CPU/GPU heavy)
+export AGENT_ENABLED=false
 ```
 
 1. Install deps (ideally in a venv):
@@ -37,3 +43,6 @@ Notes
 - The first run indexes files in `data/` into `./chroma_db`.
 - Adjust chunking and top_k in `app.py` if needed.
 - If reranker model is missing, it’s gracefully disabled.
+- Defaults are tuned for latency. For higher recall/quality, try increasing `TOP_K` (e.g., 25) and enabling `USE_HYDE` or `USE_RERANK`.
+- Agent mode is off by default to save round trips; enable with `AGENT_ENABLED=true` if you want tool-calling behavior.
+- Chroma telemetry is disabled for privacy; see `PersistentClient(..., settings=...)`.
