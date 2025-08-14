@@ -19,10 +19,12 @@ from llama_index.core.query_engine import RetrieverQueryEngine, TransformQueryEn
 from llama_index.core.schema import MetadataMode
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.core.postprocessor import (
+    AutoPrevNextNodePostprocessor,
     LongContextReorder,
     SimilarityPostprocessor,
     SentenceTransformerRerank,
 )
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
 # Try multiple import paths for cross-encoder reranker depending on LI version
 try:
     # Modern path
@@ -61,6 +63,7 @@ Settings.node_parser = SentenceSplitter(chunk_size=700, chunk_overlap=120)
 
 # Create the document index
 db = chromadb.PersistentClient(path="./chroma_db")
+PERSIST_DIR = "./storage"
 chroma_collection = db.get_or_create_collection("test")
 vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
@@ -81,8 +84,17 @@ if chroma_collection.count() == 0:
             d.metadata["lang"] = infer_language(d.text or "")
 
     index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+    # Persist docstore / index metadata for neighbor-window postprocessors
+    index.storage_context.persist(persist_dir=PERSIST_DIR)
 else:
-    index = VectorStoreIndex.from_vector_store(vector_store)
+    # Load persisted docstore if available so neighbor-window can resolve nodes
+    try:
+        storage_context = StorageContext.from_defaults(
+            vector_store=vector_store, persist_dir=PERSIST_DIR
+        )
+    except Exception:
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
 from llama_index.core.vector_stores.types import VectorStoreQueryMode
 
@@ -105,6 +117,26 @@ try:
                 top_n=12, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
             )
         )
+except Exception:
+    pass
+
+# Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
+class SafeAutoPrevNext(BaseNodePostprocessor):
+    def __init__(self, underlying: BaseNodePostprocessor) -> None:
+        super().__init__()
+        self._underlying = underlying
+
+    def _postprocess_nodes(self, nodes, query_bundle=None):  # type: ignore[override]
+        try:
+            return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
+        except Exception:
+            return nodes
+
+# Re-introduce sentence windowing without embedding smear
+try:
+    node_postprocessors.append(
+        SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
+    )
 except Exception:
     pass
 
