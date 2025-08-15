@@ -1,6 +1,7 @@
-llama-index-core==0.11.21
-llama-index-llms-google-genai==0.3.5
-llama-index-embeddings-google==0.2.3
-chromadb==0.5.5
-sentence-transformers==3.0.1
-rank-bm25==0.2.2
+llama-index-core
+llama-index-vector-stores-chroma
+llama-index-llms-google-genai
+llama-index-embeddings-google-genai
+llama-index-retrievers-bm25
+chromadb
+python-dotenv

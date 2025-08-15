@@ -33,67 +33,66 @@ from llama_index.retrievers.bm25 import BM25Retriever
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
- 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyCX8Kr5Xj1dutjeClYQ-fFN6GH6NTP_PLg"
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv() 
 
 # Settings control global defaults
 # Speed/quality defaults (tunable via env if needed)
-LIGHT_IMPORT = os.getenv("APP_LIGHT_IMPORT", "false").lower() in {"1", "true", "yes"}
 TOP_K = int(os.getenv("TOP_K", 15))
-USE_FUSION = os.getenv("USE_FUSION", "false").lower() in {"1", "true", "yes"}
-USE_HYDE = os.getenv("USE_HYDE", "false").lower() in {"1", "true", "yes"}
-USE_RERANK = os.getenv("USE_RERANK", "false").lower() in {"1", "true", "yes"}
+USE_FUSION = os.getenv("USE_FUSION", "true").lower() == "true"
+USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
+USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 
-# Only initialize real cloud-backed models outside of light mode
-if not LIGHT_IMPORT:
-    Settings.embed_model = GoogleGenAIEmbedding(
-        model_name="text-embedding-004",
-        embed_batch_size=256,
-    )
-    Settings.llm = GoogleGenAI(
-        model="gemini-2.5-flash",
-        temperature=0.1,  # deterministic to reduce hallucinations
-    )
+Settings.embed_model = GoogleGenAIEmbedding(
+    model_name="text-embedding-004",
+    embed_batch_size=256,
+)
+Settings.llm = GoogleGenAI(
+    model="gemini-2.5-flash",
+    temperature=0.1,  # deterministic to reduce hallucinations
+)
 Settings.node_parser = SentenceSplitter(chunk_size=700, chunk_overlap=120)
 
-if not LIGHT_IMPORT:
-    # Create the document index
-    db = chromadb.PersistentClient(
-        path="./chroma_db",
-        settings=ChromaSettings(anonymized_telemetry=False)
-    )
-    PERSIST_DIR = "./storage"
-    chroma_collection = db.get_or_create_collection("test")
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+# Create the document index
+db = chromadb.PersistentClient(
+    path="./chroma_db",
+    settings=ChromaSettings(anonymized_telemetry=False)
+)
+PERSIST_DIR = "./storage"
+chroma_collection = db.get_or_create_collection("test")
+vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
 def infer_language(text: str) -> str:
     # Simple heuristic: Cyrillic -> ru, else en
     return "ru" if any("\u0400" <= ch <= "\u04FF" for ch in text) else "en"
 
 
-if not LIGHT_IMPORT:
-    if chroma_collection.count() == 0:
-        documents = SimpleDirectoryReader("data").load_data()
-        # enrich metadata for filtering
-        for d in documents:
-            d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
-            d.metadata.setdefault("section", "unknown")
-            d.metadata.setdefault("version", "v1")
-            if "lang" not in d.metadata:
-                d.metadata["lang"] = infer_language(d.text or "")
+if chroma_collection.count() == 0:
+    documents = SimpleDirectoryReader("data").load_data()
+    # enrich metadata for filtering
+    for d in documents:
+        d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
+        d.metadata.setdefault("section", "unknown")
+        d.metadata.setdefault("version", "v1")
+        if "lang" not in d.metadata:
+            d.metadata["lang"] = infer_language(d.text or "")
 
-        index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
-        # Persist docstore / index metadata for neighbor-window postprocessors
-        index.storage_context.persist(persist_dir=PERSIST_DIR)
-    else:
-        # Load persisted docstore if available so neighbor-window can resolve nodes
-        try:
-            storage_context = StorageContext.from_defaults(
-                vector_store=vector_store, persist_dir=PERSIST_DIR
-            )
-        except Exception:
-            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
+    # Persist docstore / index metadata for neighbor-window postprocessors
+    index.storage_context.persist(persist_dir=PERSIST_DIR)
+else:
+    # Load persisted docstore if available so neighbor-window can resolve nodes
+    try:
+        storage_context = StorageContext.from_defaults(
+            vector_store=vector_store, persist_dir=PERSIST_DIR
+        )
+    except Exception:
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
     index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
 _bm25_retriever: Optional[BM25Retriever] = None
@@ -139,8 +138,6 @@ def _get_bm25_retriever(filters: Optional[MetadataFilters]) -> BM25Retriever:
 
 def build_retriever(filters: Optional[MetadataFilters] = None):
     # Dense-only retriever
-    if LIGHT_IMPORT:
-        return None  # not used in tests
     dense = index.as_retriever(
         similarity_top_k=TOP_K,
         vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
@@ -169,7 +166,7 @@ def _compute_rerank_top_n(top_k: int, use_rerank: bool) -> Optional[int]:
     return min(12, max(1, top_k))
 
 
-if USE_RERANK and not LIGHT_IMPORT:
+if USE_RERANK:
     try:
         top_n = _compute_rerank_top_n(TOP_K, USE_RERANK)
         if top_n and SentenceTransformerRerank is not None:
@@ -207,20 +204,18 @@ node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
 # Place salient chunks near the beginning/end for long prompts
 node_postprocessors.append(LongContextReorder())
 
-if not LIGHT_IMPORT:
-    base_query_engine = RetrieverQueryEngine(
-        retriever=retriever,
-        node_postprocessors=node_postprocessors,
-    )
+
+base_query_engine = RetrieverQueryEngine(
+    retriever=retriever,
+    node_postprocessors=node_postprocessors,
+)
 
 # Query transforms: HyDE (+ optional user paraphrase in future)
-hyde = HyDEQueryTransform(include_original=True) if not LIGHT_IMPORT else None
-if not LIGHT_IMPORT:
-    query_engine = (
-        TransformQueryEngine(base_query_engine, hyde) if USE_HYDE else base_query_engine
-    )
-else:
-    query_engine = None
+hyde = HyDEQueryTransform(include_original=True)
+
+query_engine = (
+    TransformQueryEngine(base_query_engine, hyde) if USE_HYDE else base_query_engine
+)
 
 
 def _make_engine_with_filters(filters: Optional[List[ExactMatchFilter]]):
@@ -230,9 +225,8 @@ def _make_engine_with_filters(filters: Optional[List[ExactMatchFilter]]):
     filtered_engine = RetrieverQueryEngine(
         retriever=filtered_retriever,
         node_postprocessors=node_postprocessors,
-        response_mode="compact",
     )
-    if USE_HYDE and not LIGHT_IMPORT and hyde is not None:
+    if USE_HYDE and hyde is not None:
         return TransformQueryEngine(filtered_engine, hyde)
     return filtered_engine
 
@@ -275,9 +269,6 @@ def _build_sources(response) -> List[Dict[str, Any]]:
 
 
 def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
-    # In light mode, avoid initializing any heavy resources
-    if LIGHT_IMPORT:
-        return None
     fallback_retriever = index.as_retriever(
         similarity_top_k=TOP_K,
         vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
@@ -332,7 +323,7 @@ async def search_documents(
 # Optional agent wrapper (disabled by default to reduce latency)
 AGENT_ENABLED = os.getenv("AGENT_ENABLED", "false").lower() in {"1", "true", "yes"}
 agent = None
-if AGENT_ENABLED and not LIGHT_IMPORT:
+if AGENT_ENABLED:
     agent = AgentWorkflow.from_tools_or_functions(
         [search_documents],
         llm=Settings.llm,
@@ -348,7 +339,7 @@ if AGENT_ENABLED and not LIGHT_IMPORT:
 # Now we can ask questions about the documents or do calculations
 async def main():
     # Allow passing a custom query via CLI; default to a sensible demo query
-    query = sys.argv[1] if len(sys.argv) > 1 else "Предмет разработки"
+    query = sys.argv[1] if len(sys.argv) > 1 else "Что такое предмет разработки?"
 
     print(f"Running with query: {query}")
     if AGENT_ENABLED and agent is not None:
