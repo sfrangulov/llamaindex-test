@@ -277,7 +277,6 @@ def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
     base = RetrieverQueryEngine(
         retriever=fallback_retriever,
         node_postprocessors=node_postprocessors,
-        response_mode="compact",
     )
     if USE_HYDE and hyde is not None:
         return TransformQueryEngine(base, hyde)
@@ -321,7 +320,7 @@ async def search_documents(
 
 
 # Optional agent wrapper (disabled by default to reduce latency)
-AGENT_ENABLED = os.getenv("AGENT_ENABLED", "false").lower() in {"1", "true", "yes"}
+AGENT_ENABLED = os.getenv("AGENT_ENABLED", "false").lower() == "true"
 agent = None
 if AGENT_ENABLED:
     agent = AgentWorkflow.from_tools_or_functions(
@@ -346,9 +345,8 @@ async def main():
         try:
             agent_resp = await agent.run(query, max_iterations=1)
             text = str(agent_resp)
-            if text.strip() and text.strip().lower() != "я не знаю.":
-                print(text)
-                return
+            print(text)
+            return
         except Exception:
             pass
 
