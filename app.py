@@ -92,6 +92,7 @@ else:
             vector_store=vector_store, persist_dir=PERSIST_DIR
         )
     except Exception:
+        print("Failed to load persisted storage context, rebuilding index...")
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
     index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
@@ -176,7 +177,7 @@ if USE_RERANK:
                 )
             )
     except Exception:
-        pass
+        print("Failed to compute rerank top N")
 
 # Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
 class SafeAutoPrevNext(BaseNodePostprocessor):
@@ -188,6 +189,7 @@ class SafeAutoPrevNext(BaseNodePostprocessor):
         try:
             return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
         except Exception:
+            print("Failed to postprocess nodes")
             return nodes
 
 # Re-introduce sentence windowing without embedding smear
@@ -196,7 +198,7 @@ try:
         SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
     )
 except Exception:
-    pass
+    print("Failed to initialize AutoPrevNext postprocessor")
 
 # Light or no similarity cutoff to avoid over-pruning
 node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
@@ -253,6 +255,7 @@ def _build_sources(response) -> List[Dict[str, Any]]:
         try:
             score_val = float(sn.score) if getattr(sn, "score", None) is not None else None
         except Exception:
+            print("Failed to extract score from source node")
             score_val = None
         sources.append(
             {
@@ -348,7 +351,7 @@ async def main():
             print(text)
             return
         except Exception:
-            pass
+            print("Agent failed, falling back to direct search...")
 
     # Default path: call the retrieval tool directly for a fast answer with citations
     result_json = await search_documents(query)
