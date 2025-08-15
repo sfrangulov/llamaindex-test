@@ -20,6 +20,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.query_engine import RetrieverQueryEngine, TransformQueryEngine
 from llama_index.core.schema import MetadataMode
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
+from llama_index.core.vector_stores.types import VectorStoreQueryMode
 from llama_index.core.postprocessor import (
     AutoPrevNextNodePostprocessor,
     LongContextReorder,
@@ -35,24 +36,24 @@ from chromadb.config import Settings as ChromaSettings
  
 os.environ["GOOGLE_API_KEY"] = "AIzaSyCX8Kr5Xj1dutjeClYQ-fFN6GH6NTP_PLg"
 
-# Keep a hardcoded API key per request. No hard failure if env is missing.
-
 # Settings control global defaults
 # Speed/quality defaults (tunable via env if needed)
-LIGHT_IMPORT = os.getenv("APP_LIGHT_IMPORT") == "1"
+LIGHT_IMPORT = os.getenv("APP_LIGHT_IMPORT", "false").lower() in {"1", "true", "yes"}
 TOP_K = int(os.getenv("TOP_K", 15))
 USE_FUSION = os.getenv("USE_FUSION", "false").lower() in {"1", "true", "yes"}
 USE_HYDE = os.getenv("USE_HYDE", "false").lower() in {"1", "true", "yes"}
 USE_RERANK = os.getenv("USE_RERANK", "false").lower() in {"1", "true", "yes"}
 
-Settings.embed_model = GoogleGenAIEmbedding(
-    model_name="text-embedding-004",
-    embed_batch_size=256,
-)
-Settings.llm = GoogleGenAI(
-    model="gemini-2.5-flash",
-    temperature=0.1,  # deterministic to reduce hallucinations
-)
+# Only initialize real cloud-backed models outside of light mode
+if not LIGHT_IMPORT:
+    Settings.embed_model = GoogleGenAIEmbedding(
+        model_name="text-embedding-004",
+        embed_batch_size=256,
+    )
+    Settings.llm = GoogleGenAI(
+        model="gemini-2.5-flash",
+        temperature=0.1,  # deterministic to reduce hallucinations
+    )
 Settings.node_parser = SentenceSplitter(chunk_size=700, chunk_overlap=120)
 
 if not LIGHT_IMPORT:
@@ -93,9 +94,7 @@ if not LIGHT_IMPORT:
             )
         except Exception:
             storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
-
-from llama_index.core.vector_stores.types import VectorStoreQueryMode
+    index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
 
 _bm25_retriever: Optional[BM25Retriever] = None
 _bm25_nodes_cache: Optional[List[Any]] = None
@@ -212,11 +211,10 @@ if not LIGHT_IMPORT:
     base_query_engine = RetrieverQueryEngine(
         retriever=retriever,
         node_postprocessors=node_postprocessors,
-        # response_mode="compact",
     )
 
 # Query transforms: HyDE (+ optional user paraphrase in future)
-hyde = HyDEQueryTransform(include_original=True)
+hyde = HyDEQueryTransform(include_original=True) if not LIGHT_IMPORT else None
 if not LIGHT_IMPORT:
     query_engine = (
         TransformQueryEngine(base_query_engine, hyde) if USE_HYDE else base_query_engine
@@ -234,7 +232,9 @@ def _make_engine_with_filters(filters: Optional[List[ExactMatchFilter]]):
         node_postprocessors=node_postprocessors,
         response_mode="compact",
     )
-    return TransformQueryEngine(filtered_engine, hyde) if USE_HYDE else filtered_engine
+    if USE_HYDE and not LIGHT_IMPORT and hyde is not None:
+        return TransformQueryEngine(filtered_engine, hyde)
+    return filtered_engine
 
 
 def _make_filters(
@@ -275,6 +275,9 @@ def _build_sources(response) -> List[Dict[str, Any]]:
 
 
 def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
+    # In light mode, avoid initializing any heavy resources
+    if LIGHT_IMPORT:
+        return None
     fallback_retriever = index.as_retriever(
         similarity_top_k=TOP_K,
         vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
@@ -285,7 +288,9 @@ def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
         node_postprocessors=node_postprocessors,
         response_mode="compact",
     )
-    return TransformQueryEngine(base, hyde) if USE_HYDE else base
+    if USE_HYDE and hyde is not None:
+        return TransformQueryEngine(base, hyde)
+    return base
 
 
 async def search_documents(

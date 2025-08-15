@@ -1,7 +1,5 @@
 import os
-import json
 import asyncio
-import types
 
 # Light import mode disables heavy index/DB initialization
 os.environ["APP_LIGHT_IMPORT"] = "1"
