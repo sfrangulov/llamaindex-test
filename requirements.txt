@@ -1,8 +1,8 @@
-llama-index-core
-llama-index-vector-stores-chroma
-llama-index-llms-google-genai
-llama-index-embeddings-google-genai
-llama-index-retrievers-bm25
-chromadb
-python-dotenv
-sentence-transformers
+llama-index-core==0.13.2          # core APIs used: VectorStoreIndex, Settings, StorageContext, query engines
+llama-index-vector-stores-chroma==0.5.0  # ChromaVectorStore integration
+llama-index-llms-google-genai==0.3.0     # GoogleGenAI LLM driver
+llama-index-embeddings-google-genai==0.3.0  # GoogleGenAIEmbedding for text-embedding-004
+llama-index-retrievers-bm25==0.6.3       # BM25Retriever for sparse retrieval
+chromadb==1.0.17                  # PersistentClient for vector DB
+python-dotenv==1.1.1             # load_dotenv for env config
+sentence-transformers==5.1.0     # optional reranker: SentenceTransformerRerank

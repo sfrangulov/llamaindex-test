@@ -19,19 +19,12 @@ Quick start
 export GOOGLE_API_KEY="<your_key>"
 # Optional toggles (defaults shown)
 export TOP_K=15
-export USE_FUSION=false   # enable to try multi-retriever reciprocal rerank
-export USE_HYDE=false     # enable synthetic query expansion (adds LLM latency)
-export USE_RERANK=false   # enable cross-encoder reranker (CPU/GPU heavy)
+export USE_FUSION=true    # hybrid (dense+BM25) with reciprocal rerank
+export USE_HYDE=true      # synthetic query expansion (adds LLM latency)
+export USE_RERANK=true    # cross-encoder reranker (CPU/GPU heavy)
 export AGENT_ENABLED=false
 ```
-
-1. Install deps (ideally in a venv):
-
-```zsh
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
+ 
 1. Run:
 
 ```zsh
@@ -40,9 +33,13 @@ python app.py
 
 Notes
 
-- The first run indexes files in `data/` into `./chroma_db`.
+- The first run indexes files in `data/` into `./chroma_db` and persists metadata to `./storage` for neighbor-windowing.
 - Adjust chunking and top_k in `app.py` if needed.
 - If reranker model is missing, it’s gracefully disabled.
 - Defaults are tuned for latency. For higher recall/quality, try increasing `TOP_K` (e.g., 25) and enabling `USE_HYDE` or `USE_RERANK`.
 - Agent mode is off by default to save round trips; enable with `AGENT_ENABLED=true` if you want tool-calling behavior.
 - Chroma telemetry is disabled for privacy; see `PersistentClient(..., settings=...)`.
+
+Docs
+
+- See `docs/Deliverables.md` for the refactor strategy, dependency justifications, regression plan, and sources.

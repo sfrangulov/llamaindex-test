@@ -34,14 +34,11 @@ from llama_index.retrievers.bm25 import BM25Retriever
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-import logging
-
-logging.basicConfig(level=logging.ERROR)
 
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv() 
+load_dotenv()
 
 # Settings control global defaults
 # Speed/quality defaults (tunable via env if needed)
@@ -63,13 +60,13 @@ Settings.node_parser = SentenceSplitter(chunk_size=700, chunk_overlap=120)
 
 # Create the document index
 db = chromadb.PersistentClient(
-    path="./chroma_db",
-    settings=ChromaSettings(anonymized_telemetry=False)
+    path="./chroma_db", settings=ChromaSettings(anonymized_telemetry=False)
 )
 PERSIST_DIR = "./storage"
 chroma_collection = db.get_or_create_collection("test")
 vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
 storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
 
 def infer_language(text: str) -> str:
     # Simple heuristic: Cyrillic -> ru, else en
@@ -80,7 +77,10 @@ if chroma_collection.count() == 0:
     documents = SimpleDirectoryReader("data").load_data()
     # enrich metadata for filtering
     for d in documents:
-        d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
+        d.metadata.setdefault(
+            "file_name",
+            d.metadata.get("file_name") or d.metadata.get("filename") or "unknown",
+        )
         d.metadata.setdefault("section", "unknown")
         d.metadata.setdefault("version", "v1")
         if "lang" not in d.metadata:
@@ -98,9 +98,10 @@ else:
     except Exception:
         print("Failed to load persisted storage context, rebuilding index...")
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context)
+    index = VectorStoreIndex.from_vector_store(
+        vector_store, storage_context=storage_context
+    )
 
-_bm25_retriever: Optional[BM25Retriever] = None
 _bm25_nodes_cache: Optional[List[Any]] = None
 
 
@@ -108,7 +109,10 @@ def _load_nodes_for_bm25() -> List[Any]:
     # Build nodes from documents via the configured node parser
     documents = SimpleDirectoryReader("data").load_data()
     for d in documents:
-        d.metadata.setdefault("file_name", d.metadata.get("file_name") or d.metadata.get("filename") or "unknown")
+        d.metadata.setdefault(
+            "file_name",
+            d.metadata.get("file_name") or d.metadata.get("filename") or "unknown",
+        )
         d.metadata.setdefault("section", "unknown")
         d.metadata.setdefault("version", "v1")
         if "lang" not in d.metadata:
@@ -121,7 +125,11 @@ def _filter_nodes(nodes: List[Any], filters: Optional[MetadataFilters]) -> List[
         return nodes
     result = []
     for n in nodes:
-        meta = getattr(n, "metadata", {}) or getattr(getattr(n, "node", None), "metadata", {}) or {}
+        meta = (
+            getattr(n, "metadata", {})
+            or getattr(getattr(n, "node", None), "metadata", {})
+            or {}
+        )
         ok = True
         for f in filters.filters:
             if meta.get(f.key) != f.value:
@@ -133,7 +141,7 @@ def _filter_nodes(nodes: List[Any], filters: Optional[MetadataFilters]) -> List[
 
 
 def _get_bm25_retriever(filters: Optional[MetadataFilters]) -> BM25Retriever:
-    global _bm25_retriever, _bm25_nodes_cache
+    global _bm25_nodes_cache
     if _bm25_nodes_cache is None:
         _bm25_nodes_cache = _load_nodes_for_bm25()
     nodes = _filter_nodes(_bm25_nodes_cache, filters)
@@ -160,28 +168,16 @@ def build_retriever(filters: Optional[MetadataFilters] = None):
         )
     return dense
 
+
 retriever = build_retriever()
 
-node_postprocessors = []
 
-# Cross-encoder rerank first for precision
 def _compute_rerank_top_n(top_k: int, use_rerank: bool) -> Optional[int]:
+    """Compute cross-encoder rerank top_n based on TOP_K and flag."""
     if not use_rerank:
         return None
     return min(12, max(1, top_k))
 
-
-if USE_RERANK:
-    try:
-        top_n = _compute_rerank_top_n(TOP_K, USE_RERANK)
-        if top_n and SentenceTransformerRerank is not None:
-            node_postprocessors.append(
-                SentenceTransformerRerank(
-                    top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
-                )
-            )
-    except Exception as e:
-        print(f"Failed to compute rerank top N: {e}")
 
 # Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
 class SafeAutoPrevNext(BaseNodePostprocessor):
@@ -196,19 +192,40 @@ class SafeAutoPrevNext(BaseNodePostprocessor):
             print(f"Failed to postprocess nodes: {e}")
             return nodes
 
-# Re-introduce sentence windowing without embedding smear
-try:
-    node_postprocessors.append(
-        SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
-    )
-except Exception as e:
-    print(f"Failed to initialize AutoPrevNext postprocessor: {e}")
 
-# Light or no similarity cutoff to avoid over-pruning
-node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
+def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
+    node_postprocessors: List[BaseNodePostprocessor] = []
+    # Cross-encoder rerank first for precision
+    if USE_RERANK:
+        try:
+            top_n = _compute_rerank_top_n(TOP_K, USE_RERANK)
+            if top_n and SentenceTransformerRerank is not None:
+                node_postprocessors.append(
+                    SentenceTransformerRerank(
+                        top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
+                    )
+                )
+        except Exception as e:
+            print(f"Failed to compute rerank top N: {e}")
 
-# Place salient chunks near the beginning/end for long prompts
-node_postprocessors.append(LongContextReorder())
+    # Re-introduce sentence windowing without embedding smear
+    try:
+        node_postprocessors.append(
+            SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
+        )
+    except Exception as e:
+        print(f"Failed to initialize AutoPrevNext postprocessor: {e}")
+
+    # Light or no similarity cutoff to avoid over-pruning
+    node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
+
+    # Place salient chunks near the beginning/end for long prompts
+    node_postprocessors.append(LongContextReorder())
+
+    return node_postprocessors
+
+
+node_postprocessors = _build_node_postprocessors()
 
 
 base_query_engine = RetrieverQueryEngine(
@@ -238,7 +255,11 @@ def _make_engine_with_filters(filters: Optional[List[ExactMatchFilter]]):
 
 
 def _make_filters(
-    *, file_name: Optional[str], section: Optional[str], lang: Optional[str], version: Optional[str]
+    *,
+    file_name: Optional[str],
+    section: Optional[str],
+    lang: Optional[str],
+    version: Optional[str],
 ) -> List[ExactMatchFilter]:
     filters: List[ExactMatchFilter] = []
     if file_name:
@@ -257,7 +278,9 @@ def _build_sources(response) -> List[Dict[str, Any]]:
     for sn in getattr(response, "source_nodes", []) or []:
         meta = sn.node.metadata or {}
         try:
-            score_val = float(sn.score) if getattr(sn, "score", None) is not None else None
+            score_val = (
+                float(sn.score) if getattr(sn, "score", None) is not None else None
+            )
         except Exception as e:
             print(f"Failed to extract score from source node: {e}")
             score_val = None
@@ -303,7 +326,9 @@ async def search_documents(
     Optional metadata filters can be provided to narrow the search.
     In production, prefer to return a structured object; here we JSON-encode for the agent.
     """
-    filters = _make_filters(file_name=file_name, section=section, lang=lang, version=version)
+    filters = _make_filters(
+        file_name=file_name, section=section, lang=lang, version=version
+    )
 
     engine = _make_engine_with_filters(filters)
     t0 = time.time()

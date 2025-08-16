@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "pytest -q",
+			"type": "shell",
+			"command": "pytest -q",
+			"problemMatcher": [
+				"$pytest-stylish"
+			],
+			"group": "test"
+		}
+	]
+}
