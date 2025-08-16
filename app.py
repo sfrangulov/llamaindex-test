@@ -22,6 +22,7 @@ from llama_index.core.query_engine import RetrieverQueryEngine, TransformQueryEn
 from llama_index.core.schema import MetadataMode
 from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.core.vector_stores.types import VectorStoreQueryMode
+from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.core.postprocessor import (
     AutoPrevNextNodePostprocessor,
     LongContextReorder,
@@ -79,6 +80,8 @@ TOP_K = int(os.getenv("TOP_K", 15))
 USE_FUSION = os.getenv("USE_FUSION", "true").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
 USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
+PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
+RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
 Settings.embed_model = GoogleGenAIEmbedding(
     model_name="text-embedding-004",
@@ -348,6 +351,56 @@ def _make_fallback_engine(filters: Optional[List[ExactMatchFilter]]):
     return base
 
 
+# --- Parallel HyDE utilities -------------------------------------------------
+async def _generate_hyde_text(user_query: str) -> str:
+    """Generate a short hypothetical answer for HyDE using the configured LLM.
+
+    This approximates HyDE behavior without blocking other steps.
+    """
+    try:
+        from llama_index.core.prompts import PromptTemplate as prompt_template_cls
+    except Exception:
+        prompt_template_cls = None  # type: ignore
+    template_text = (
+        "Сгенерируй краткий (80-120 слов) абзац, который мог бы содержаться в документации, "
+        "отвечающий на запрос: \n{query}\n"
+        "Пиши информативно и по делу, без вступлений."
+    )
+    try:
+        if prompt_template_cls is not None:
+            tmpl = prompt_template_cls(template_text)
+            # Use async LLM call if available
+            return await Settings.llm.apredict(tmpl, prompt_args={"query": user_query})  # type: ignore[attr-defined]
+        else:
+            # Fallback: pass as a formatted string
+            return await Settings.llm.apredict(template_text.format(query=user_query))  # type: ignore[attr-defined]
+    except AttributeError:
+        # Fallback to sync if async isn't available
+        if prompt_template_cls is not None:
+            tmpl = prompt_template_cls(template_text)
+            return Settings.llm.predict(tmpl, prompt_args={"query": user_query})
+        return Settings.llm.predict(template_text.format(query=user_query))
+
+
+def _merge_nodes_by_score(nodes_lists: List[List[Any]], limit: int) -> List[Any]:
+    """Merge NodeWithScore lists, deduplicate by node_id, keep best score, return top-N."""
+    best: Dict[str, Any] = {}
+    for lst in nodes_lists:
+        for n in lst or []:
+            node_obj = getattr(n, "node", None)
+            node_id = getattr(node_obj, "node_id", None) or getattr(n, "node_id", None)
+            if node_id is None:
+                # If cannot determine id, append as-is with a synthetic key
+                node_id = f"_idx_{id(n)}"
+            prev = best.get(node_id)
+            if prev is None or (getattr(n, "score", 0.0) or 0.0) > (getattr(prev, "score", 0.0) or 0.0):
+                best[node_id] = n
+    # Sort by score desc if available
+    merged = list(best.values())
+    merged.sort(key=lambda x: (getattr(x, "score", 0.0) or 0.0), reverse=True)
+    return merged[:limit]
+
+
 async def search_documents(
     query: str,
     *,
@@ -367,7 +420,39 @@ async def search_documents(
 
     engine = _make_engine_with_filters(filters)
     t0 = time.time()
-    response = await engine.aquery(query)
+
+    # Parallel HyDE path: overlap HyDE generation with baseline retrieval, then
+    # combine results and do a single final synthesis. Falls back to regular path on error.
+    if USE_HYDE and PARALLEL_HYDE:
+        try:
+            # 1) Kick off baseline retrieve and hyde text generation concurrently
+            base_retriever = build_retriever(MetadataFilters(filters=filters)) if filters else retriever
+            # We use raw retriever to get nodes without invoking LLM synthesis yet
+            base_task = asyncio.create_task(base_retriever.aretrieve(query))  # type: ignore[attr-defined]
+            hyde_task = asyncio.create_task(_generate_hyde_text(query))
+
+            base_nodes, hyde_text = await asyncio.gather(base_task, hyde_task)
+
+            # 2) Do a second retrieval for hyde text
+            hyde_nodes = await base_retriever.aretrieve(hyde_text)  # type: ignore[attr-defined]
+
+            # 3) Merge nodes and synthesize once
+            merged_nodes = _merge_nodes_by_score([base_nodes, hyde_nodes], TOP_K)
+            synthesizer = get_response_synthesizer(
+                llm=Settings.llm,
+                response_mode=RESPONSE_MODE,
+                use_async=True,
+            )
+            response = await synthesizer.asynthesize(
+                query,
+                merged_nodes,
+            )
+        except Exception as e:
+            logging.exception("Parallel HyDE failed, falling back to engine.aquery: %s", e)
+            response = await engine.aquery(query)
+    else:
+        response = await engine.aquery(query)
+
     t_retrieve_llm = time.time() - t0
     # Fallback: if empty, retry with dense-only retriever without fusion
     if not str(response).strip() or not getattr(response, "source_nodes", None):
