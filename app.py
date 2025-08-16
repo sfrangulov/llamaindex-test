@@ -3,6 +3,7 @@ import sys
 import time
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import (
@@ -36,6 +37,38 @@ from chromadb.config import Settings as ChromaSettings
 
 
 from dotenv import load_dotenv
+
+# Optional pretty logging with colorlog if available
+def _setup_logging() -> None:
+    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, level, logging.INFO)
+    try:
+        from colorlog import ColoredFormatter  # type: ignore
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            ColoredFormatter(
+                "%(log_color)s%(levelname)-8s%(reset)s %(white)s%(message)s",
+                log_colors={
+                    "DEBUG": "cyan",
+                    "INFO": "green",
+                    "WARNING": "yellow",
+                    "ERROR": "red",
+                    "CRITICAL": "bold_red",
+                },
+            )
+        )
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.addHandler(handler)
+        root.setLevel(log_level)
+    except Exception:
+        logging.basicConfig(
+            level=log_level,
+            format="%(levelname)s %(message)s",
+        )
+
+_setup_logging()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -96,7 +129,9 @@ else:
             vector_store=vector_store, persist_dir=PERSIST_DIR
         )
     except Exception:
-        print("Failed to load persisted storage context, rebuilding index...")
+        logging.warning(
+            "Failed to load persisted storage context, rebuilding index..."
+        )
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
     index = VectorStoreIndex.from_vector_store(
         vector_store, storage_context=storage_context
@@ -189,7 +224,7 @@ class SafeAutoPrevNext(BaseNodePostprocessor):
         try:
             return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
         except Exception as e:
-            print(f"Failed to postprocess nodes: {e}")
+            logging.error("Failed to postprocess nodes: %s", e)
             return nodes
 
 
@@ -206,7 +241,7 @@ def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
                     )
                 )
         except Exception as e:
-            print(f"Failed to compute rerank top N: {e}")
+            logging.exception("Failed to compute rerank top N: %s", e)
 
     # Re-introduce sentence windowing without embedding smear
     try:
@@ -214,7 +249,7 @@ def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
             SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
         )
     except Exception as e:
-        print(f"Failed to initialize AutoPrevNext postprocessor: {e}")
+        logging.exception("Failed to initialize AutoPrevNext postprocessor: %s", e)
 
     # Light or no similarity cutoff to avoid over-pruning
     node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
@@ -341,9 +376,9 @@ async def search_documents(
     # Build citation structure
     sources = _build_sources(response)
 
-    print(f"Found {len(sources)} sources for query: {query}")
-    print(f"Latency: {t_retrieve_llm:.2f}s (retrieval+LLM)")
-    print(f"Response: {response}")
+    logging.info("Found %d sources for query: %s", len(sources), query)
+    logging.info("Latency: %.2fs (retrieval+LLM)", t_retrieve_llm)
+    logging.debug("Response: %s", response)
     payload: Dict[str, Any] = {
         "answer": str(response),
         "sources": sources,
@@ -372,7 +407,7 @@ async def main():
     # Allow passing a custom query via CLI; default to a sensible demo query
     query = sys.argv[1] if len(sys.argv) > 1 else "Что такое предмет разработки?"
 
-    print(f"Running with query: {query}")
+    logging.info("Running with query: %s", query)
     if AGENT_ENABLED and agent is not None:
         try:
             agent_resp = await agent.run(query, max_iterations=1)
@@ -380,7 +415,7 @@ async def main():
             print(text)
             return
         except Exception as e:
-            print(f"Agent failed, falling back to direct search... {e}")
+            logging.exception("Agent failed, falling back to direct search... %s", e)
 
     # Default path: call the retrieval tool directly for a fast answer with citations
     result_json = await search_documents(query)

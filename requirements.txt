@@ -6,3 +6,4 @@ llama-index-retrievers-bm25==0.6.3       # BM25Retriever for sparse retrieval
 chromadb==1.0.17                  # PersistentClient for vector DB
 python-dotenv==1.1.1             # load_dotenv for env config
 sentence-transformers==5.1.0     # optional reranker: SentenceTransformerRerank
+colorlog==6.7.0                  # colored logging output
