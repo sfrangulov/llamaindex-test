@@ -77,7 +77,7 @@ load_dotenv()
 # Settings control global defaults
 # Speed/quality defaults (tunable via env if needed)
 TOP_K = int(os.getenv("TOP_K", 15))
-USE_FUSION = os.getenv("USE_FUSION", "true").lower() == "true"
+USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
 USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
