@@ -5,3 +5,4 @@ llama-index-embeddings-google-genai
 llama-index-retrievers-bm25
 chromadb
 python-dotenv
+sentence-transformers

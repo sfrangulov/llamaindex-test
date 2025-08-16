@@ -34,6 +34,10 @@ from llama_index.retrievers.bm25 import BM25Retriever
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
+import logging
+
+logging.basicConfig(level=logging.ERROR)
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -176,8 +180,8 @@ if USE_RERANK:
                     top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2"
                 )
             )
-    except Exception:
-        print("Failed to compute rerank top N")
+    except Exception as e:
+        print(f"Failed to compute rerank top N: {e}")
 
 # Safe wrapper for neighbor windowing: if docstore misses nodes, skip gracefully
 class SafeAutoPrevNext(BaseNodePostprocessor):
@@ -188,8 +192,8 @@ class SafeAutoPrevNext(BaseNodePostprocessor):
     def _postprocess_nodes(self, nodes, query_bundle=None):  # type: ignore[override]
         try:
             return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
-        except Exception:
-            print("Failed to postprocess nodes")
+        except Exception as e:
+            print(f"Failed to postprocess nodes: {e}")
             return nodes
 
 # Re-introduce sentence windowing without embedding smear
@@ -197,8 +201,8 @@ try:
     node_postprocessors.append(
         SafeAutoPrevNext(AutoPrevNextNodePostprocessor(docstore=index.docstore))
     )
-except Exception:
-    print("Failed to initialize AutoPrevNext postprocessor")
+except Exception as e:
+    print(f"Failed to initialize AutoPrevNext postprocessor: {e}")
 
 # Light or no similarity cutoff to avoid over-pruning
 node_postprocessors.append(SimilarityPostprocessor(similarity_cutoff=0.05))
@@ -254,8 +258,8 @@ def _build_sources(response) -> List[Dict[str, Any]]:
         meta = sn.node.metadata or {}
         try:
             score_val = float(sn.score) if getattr(sn, "score", None) is not None else None
-        except Exception:
-            print("Failed to extract score from source node")
+        except Exception as e:
+            print(f"Failed to extract score from source node: {e}")
             score_val = None
         sources.append(
             {
@@ -332,7 +336,7 @@ if AGENT_ENABLED:
         system_prompt=(
             "Ты — ассистент для поиска по локальным документам. "
             "Всегда используй инструмент search_documents для ответа и не отвечай без него. "
-            "Отвечай кратко, опираясь только на найденные фрагменты. Если результатов нет — скажи, что не знаешь. "
+            "Отвечай развернуто, опираясь только на найденные фрагменты. Если результатов нет — скажи, что не знаешь. "
             "В ответе используй точные цитаты и добавляй ссылки на источники из результатов инструмента."
         ),
     )
@@ -350,8 +354,8 @@ async def main():
             text = str(agent_resp)
             print(text)
             return
-        except Exception:
-            print("Agent failed, falling back to direct search...")
+        except Exception as e:
+            print(f"Agent failed, falling back to direct search... {e}")
 
     # Default path: call the retrieval tool directly for a fast answer with citations
     result_json = await search_documents(query)
