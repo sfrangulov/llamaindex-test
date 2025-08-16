@@ -77,7 +77,7 @@ load_dotenv()
 # Settings control global defaults
 # Speed/quality defaults (tunable via env if needed)
 TOP_K = int(os.getenv("TOP_K", 15))
-USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
+USE_FUSION = os.getenv("USE_FUSION", "true").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
 USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
@@ -224,11 +224,23 @@ class SafeAutoPrevNext(BaseNodePostprocessor):
         self._underlying = underlying
 
     def _postprocess_nodes(self, nodes, query_bundle=None):  # type: ignore[override]
-        try:
-            return self._underlying.postprocess_nodes(nodes, query_bundle=query_bundle)
-        except Exception as e:
-            logging.error("Failed to postprocess nodes: %s", e)
-            return nodes
+        # Process node-by-node to avoid failing the entire batch when one doc_id is missing
+        processed = []
+        for n in nodes or []:
+            try:
+                out = self._underlying.postprocess_nodes([n], query_bundle=query_bundle)
+                if out:
+                    processed.extend(out)
+                else:
+                    processed.append(n)
+            except Exception as e:
+                # Missing entries in docstore are expected when stores get out of sync.
+                # Downgrade to warning and keep the original node.
+                node_obj = getattr(n, "node", n)
+                node_id = getattr(node_obj, "node_id", "unknown")
+                logging.warning("Skipping neighbor-window for node %s: %s", node_id, e)
+                processed.append(n)
+        return processed
 
 
 def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
