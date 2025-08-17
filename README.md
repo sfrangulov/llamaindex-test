@@ -43,3 +43,37 @@ Notes
 Docs
 
 - See `docs/Deliverables.md` for the refactor strategy, dependency justifications, regression plan, and sources.
+
+Environment variables
+
+All flags are optional unless marked required:
+
+- GOOGLE_API_KEY (required) — used by Gemini LLM/embeddings.
+- TOP_K (default: 15) — retrieval top-k.
+- USE_FUSION (default: true) — enable hybrid BM25+dense via QueryFusionRetriever.
+- USE_HYDE (default: true) — enable HyDE query transform.
+- PARALLEL_HYDE (default: true) — overlap HyDE generation with retrieval.
+- USE_RERANK (default: true) — enable cross-encoder reranker.
+- RESPONSE_MODE (default: compact) — response synthesizer mode.
+- CHROMA_PATH (default: ./chroma_db) — Chroma persistent path.
+- CHROMA_COLLECTION (default: test) — Chroma collection name.
+- PERSIST_DIR (default: ./storage) — path for persisted docstore/index.
+- AGENT_ENABLED (default: false) — enable AgentWorkflow wrapper.
+- LOG_LEVEL (default: INFO) — logging verbosity.
+
+Example `.env`:
+
+```env
+GOOGLE_API_KEY=your_key_here
+TOP_K=15
+USE_FUSION=true
+USE_HYDE=true
+PARALLEL_HYDE=true
+USE_RERANK=true
+RESPONSE_MODE=compact
+CHROMA_PATH=./chroma_db
+CHROMA_COLLECTION=test
+PERSIST_DIR=./storage
+AGENT_ENABLED=false
+LOG_LEVEL=INFO
+```
