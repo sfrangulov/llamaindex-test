@@ -1,65 +1,49 @@
 # LlamaIndex RAG Demo
 
-This project demonstrates a production-leaning RAG pipeline powered by LlamaIndex and ChromaDB.
+A small local RAG project powered by LlamaIndex + ChromaDB + Google Gemini. It supports hybrid retrieval (BM25 + dense), HyDE, useful postprocessors, and returns answers with cited sources.
 
-What’s included
+## Features
 
-- Hybrid retriever (BM25 + dense) with reciprocal rerank and keyword weight alpha≈0.35.
-- SentenceWindow and LongContextReorder postprocessors.
-- Similarity cutoff + optional cross-encoder reranker.
-- HyDE query transform and deterministic LLM settings.
-- Metadata filters (file_name, section, lang, version).
-- Answers return citations (source_nodes) for UI highlighting.
+- Hybrid retriever: BM25 + dense via QueryFusionRetriever (reciprocal rerank)
+- HyDE (including parallel hypothesis generation)
+- Postprocessors: neighbor windows (AutoPrevNext with a safe wrapper), Similarity cutoff, LongContextReorder, optional cross‑encoder rerank
+- Metadata filters: `file_name`, `section`, `lang`, `version`
+- JSON answers with sources (`answer` + `sources[]`)
+- Optional agent mode (AgentWorkflow)
 
-Quick start
+## Requirements
 
-1. Export your Google API key:
+- macOS, Python 3.13
+- Google API key: `GOOGLE_API_KEY`
+- Documents placed under `data/` (PDFs, etc.; loaded with `SimpleDirectoryReader`)
 
-```zsh
-export GOOGLE_API_KEY="<your_key>"
-# Optional toggles (defaults shown)
-export TOP_K=15
-export USE_FUSION=true    # hybrid (dense+BM25) with reciprocal rerank
-export USE_HYDE=true      # synthetic query expansion (adds LLM latency)
-export USE_RERANK=true    # cross-encoder reranker (CPU/GPU heavy)
-export AGENT_ENABLED=false
-```
- 
-1. Run:
+## Installation
 
 ```zsh
-python app.py
+# 1) (optional) create a virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# 2) install dependencies
+pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-Notes
+## Configuration (.env)
 
-- The first run indexes files in `data/` into `./chroma_db` and persists metadata to `./storage` for neighbor-windowing.
-- Adjust chunking and top_k in `app.py` if needed.
-- If reranker model is missing, it’s gracefully disabled.
-- Defaults are tuned for latency. For higher recall/quality, try increasing `TOP_K` (e.g., 25) and enabling `USE_HYDE` or `USE_RERANK`.
-- Agent mode is off by default to save round trips; enable with `AGENT_ENABLED=true` if you want tool-calling behavior.
-- Chroma telemetry is disabled for privacy; see `PersistentClient(..., settings=...)`.
+All variables are optional unless noted otherwise.
 
-Docs
-
-- See `docs/Deliverables.md` for the refactor strategy, dependency justifications, regression plan, and sources.
-
-Environment variables
-
-All flags are optional unless marked required:
-
-- GOOGLE_API_KEY (required) — used by Gemini LLM/embeddings.
-- TOP_K (default: 15) — retrieval top-k.
-- USE_FUSION (default: true) — enable hybrid BM25+dense via QueryFusionRetriever.
-- USE_HYDE (default: true) — enable HyDE query transform.
-- PARALLEL_HYDE (default: true) — overlap HyDE generation with retrieval.
-- USE_RERANK (default: true) — enable cross-encoder reranker.
-- RESPONSE_MODE (default: compact) — response synthesizer mode.
-- CHROMA_PATH (default: ./chroma_db) — Chroma persistent path.
-- CHROMA_COLLECTION (default: test) — Chroma collection name.
-- PERSIST_DIR (default: ./storage) — path for persisted docstore/index.
-- AGENT_ENABLED (default: false) — enable AgentWorkflow wrapper.
-- LOG_LEVEL (default: INFO) — logging verbosity.
+- GOOGLE_API_KEY (required) — key for Gemini LLM/embeddings
+- TOP_K (default 15) — retrieval top‑k
+- USE_FUSION (true) — hybrid BM25 + dense
+- USE_HYDE (true) — enable HyDE
+- PARALLEL_HYDE (true) — run HyDE in parallel with base retrieval
+- USE_RERANK (true) — cross‑encoder rerank
+- RESPONSE_MODE (compact) — response synthesis mode
+- CHROMA_PATH (./chroma_db) — Chroma path
+- CHROMA_COLLECTION (test) — Chroma collection name
+- PERSIST_DIR (./storage) — LlamaIndex docstore/index directory
+- AGENT_ENABLED (false) — enable agent mode
+- LOG_LEVEL (INFO) — logging level
 
 Example `.env`:
 
@@ -77,3 +61,62 @@ PERSIST_DIR=./storage
 AGENT_ENABLED=false
 LOG_LEVEL=INFO
 ```
+
+## Quick start
+
+```zsh
+# activate venv and export the key (or rely on .env)
+export GOOGLE_API_KEY="<your_key>"
+
+# run an example query
+python app.py "What is the scope of work?"
+```
+
+The output is JSON with `answer` and `sources` fields.
+
+## Project structure
+
+```text
+.
+├── app.py                # CLI wrapper over rag_engine
+├── rag_engine.py         # Indexing/retrieval/synthesis logic
+├── data/                 # Local documents
+├── chroma_db/            # Persistent Chroma store
+├── storage/              # LlamaIndex docstore/index
+├── tests/                # Unit/integration tests
+├── requirements.txt
+├── requirements-dev.txt
+└── docs/Deliverables.md
+```
+
+## How it works
+
+1) On the first run, documents from `data/` are indexed into Chroma (`./chroma_db`), while metadata/docstore are persisted to `./storage` to enable neighbor-window postprocessing.
+2) The retriever combines dense retrieval from the index and BM25 (if `USE_FUSION=true`) using reciprocal rerank.
+3) If `USE_HYDE=true`, a hypothetical answer is generated (HyDE) and used to perform another retrieval; results are merged and synthesized once.
+4) Postprocessors reorder/filter results and add adjacent context chunks.
+5) The final answer is returned along with cited sources.
+
+## Testing
+
+```zsh
+pytest -q
+```
+
+The integration test uses MockLLM and BM25 for an offline run.
+
+## Quality and performance tips
+
+- Higher answer quality: increase `TOP_K`, enable `USE_HYDE` and `USE_RERANK`
+- Lower latency: disable HyDE/rerank, reduce `TOP_K`
+- If needed, you can disable Chroma telemetry via `PersistentClient(..., settings=...)`
+
+## Troubleshooting
+
+- OpenAI API key error: this project uses Gemini; ensure `GOOGLE_API_KEY` is set and that LlamaIndex settings aren’t overridden before initialization
+- Empty answers: verify `data/` has readable documents; temporarily disable `USE_FUSION`
+- Slow responses: disable `USE_HYDE` and `USE_RERANK`, lower `TOP_K`
+
+## Links
+
+- LlamaIndex docs (retrievers/HyDE/postprocessors/Chroma)
