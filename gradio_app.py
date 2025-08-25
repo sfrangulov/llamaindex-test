@@ -26,6 +26,8 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         cites: List[Tuple[str, str]] = []
         for s in reversed(sources):
             title = (s.get("file_name") or "source")
+            score = s.get("score") or 0
+            title = f"{title} · {score}"
             snippet = (s.get("text") or "").strip()
             cites.append((title, snippet))
         return answer, cites

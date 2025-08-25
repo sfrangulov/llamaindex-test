@@ -43,7 +43,7 @@ load_dotenv()
 TOP_K = int(os.getenv("TOP_K", 10))
 USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
-PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
+PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "false").lower() == "true"
 USE_RERANK = os.getenv("USE_RERANK", "false").lower() == "true"
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
