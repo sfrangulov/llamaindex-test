@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 from typing import List, Tuple
@@ -26,8 +27,8 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         cites: List[Tuple[str, str]] = []
         for s in sources:
             title = (s.get("file_name") or "source")
-            score = s.get("score") or 0
-            title = f"{title} · {score}"
+            score = float(s.get("score") or 0)
+            title = f"{title} · {score:.2f}"
             snippet = (s.get("text") or "").strip()
             cites.append((title, snippet))
         return answer, cites
@@ -36,14 +37,42 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         return f"Ошибка: {e}", []
 
 
-def _format_sources_md(rows: List[Tuple[str, str]]) -> str:
-    """Render sources as Markdown, preserving snippet markdown formatting."""
+def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
+    """Render sources as collapsible sections; keep snippet markdown intact.
+
+    - Each source is wrapped in <details> to avoid a very long screen.
+    - Titles include rounded scores prepared in _answer_once.
+    """
     if not rows:
         return ""
+
+    def _highlight(text: str, q: str) -> str:
+        q = (q or "").strip()
+        if len(q) < 3:
+            return text
+        # Highlight distinct words of length >= 3
+        words = {w for w in re.split(r"\W+", q, flags=re.UNICODE) if len(w) >= 3}
+        if not words:
+            return text
+        pattern = re.compile(r"(" + "|".join(map(re.escape, sorted(words, key=len, reverse=True))) + r")", re.IGNORECASE | re.UNICODE)
+        return pattern.sub(r"<mark>\1</mark>", text)
+
     parts: List[str] = []
-    for title, snippet in rows:
-        parts.append(f"**{title}**\n\n{snippet}\n\n---")
-    return "\n".join(parts)
+    parts.append(f"Найдено источников: {len(rows)}\n")
+    for i, (title, snippet) in enumerate(rows, start=1):
+        # Collapsible block per source; allow raw HTML in Markdown
+        parts.append(
+            "\n".join(
+                [
+                    f"<details><summary><b>[{i}]</b> {title}</summary>",
+                    "",
+                    _highlight(snippet, query),
+                    "",
+                    "</details>",
+                ]
+            )
+        )
+    return "\n\n".join(parts)
 
 
 # --------------- Chat Logic ---------------
@@ -65,7 +94,7 @@ with gr.Blocks(title="Docs Chat") as demo:
         history = history + [{"role": "user", "content": user_message}]
         answer, cites = await _answer_once(user_message)
         history = history + [{"role": "assistant", "content": answer}]
-        return gr.update(value=history), _format_sources_md(cites), gr.update(value="")
+        return gr.update(value=history), _format_sources_md(cites, user_message), gr.update(value="")
 
     def on_clear():
         return [], "", ""
