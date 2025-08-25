@@ -76,14 +76,15 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 
 
 # --------------- Chat Logic ---------------
-with gr.Blocks(title="Docs Chat") as demo:
-    gr.Markdown("# Поиск по документам — чат")
+with gr.Blocks(title="Поиск по документам") as demo:
+    gr.Markdown("# Поиск по документам")
     with gr.Row():
         with gr.Column(scale=3):
             chat = gr.Chatbot(height=500, show_copy_button=True, type="messages")
             msg = gr.Textbox(placeholder="Задайте вопрос по документации…", label="Сообщение", lines=2)
-            send = gr.Button("Отправить", variant="primary")
-            clear = gr.Button("Очистить")
+            with gr.Row():
+                send = gr.Button("Отправить", variant="primary")
+                clear = gr.Button("Очистить")
         with gr.Column(scale=2):
             gr.Markdown("### Источники")
             sources = gr.Markdown(value="", elem_id="sources")
