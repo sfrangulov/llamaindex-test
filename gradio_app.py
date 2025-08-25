@@ -77,10 +77,9 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 
 # --------------- Chat Logic ---------------
 with gr.Blocks(title="Поиск по документам") as demo:
-    gr.Markdown("# Поиск по документам")
     with gr.Row():
         with gr.Column(scale=3):
-            chat = gr.Chatbot(height=350, show_copy_button=True, type="messages")
+            chat = gr.Chatbot(height=450, show_copy_button=True, type="messages")
             msg = gr.Textbox(placeholder="Задайте вопрос по документации…", show_label=False, lines=2)
             with gr.Row():
                 send = gr.Button("Отправить", variant="primary")
