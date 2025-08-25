@@ -24,7 +24,7 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         sources = payload.get("sources") or []
         # Make a compact citations list
         cites: List[Tuple[str, str]] = []
-        for s in reversed(sources):
+        for s in sources:
             title = (s.get("file_name") or "source")
             score = s.get("score") or 0
             title = f"{title} · {score}"

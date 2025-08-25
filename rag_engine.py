@@ -30,6 +30,7 @@ from llama_index.core.node_parser import MarkdownNodeParser
 # Providers
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from google.genai.types import EmbedContentConfig
 from llama_index.llms.google_genai import GoogleGenAI
 
 import chromadb
@@ -54,8 +55,15 @@ PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser)."""
-    Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
-    # Settings.embed_model = GoogleGenAIEmbedding(model_name="gemini-embedding-001")
+    # Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
+    Settings.embed_model = GoogleGenAIEmbedding(
+        model_name="gemini-embedding-001",          # новое имя модели
+        embed_batch_size=100,
+        embedding_config = EmbedContentConfig(
+            output_dimensionality=768,
+            task_type="RETRIEVAL_DOCUMENT"
+        )
+    )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
     node_parser = MarkdownNodeParser()
     Settings.node_parser = node_parser
@@ -212,6 +220,7 @@ def _build_sources(response) -> List[Dict[str, Any]]:
                 "text": sn.node.get_content(metadata_mode=MetadataMode.NONE),
             }
         )
+        sources.sort(key=lambda x: x["score"] or 0, reverse=True)
     return sources
 
 
