@@ -24,14 +24,9 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         sources = payload.get("sources") or []
         # Make a compact citations list
         cites: List[Tuple[str, str]] = []
-        for s in sources:
+        for s in reversed(sources):
             title = (s.get("file_name") or "source")
-            section = s.get("section")
-            if section:
-                title = f"{title} · {section}"
             snippet = (s.get("text") or "").strip()
-            if len(snippet) > 400:
-                snippet = snippet[:400] + "…"
             cites.append((title, snippet))
         return answer, cites
     except Exception as e:
@@ -64,7 +59,7 @@ with gr.Blocks(title="Docs Chat") as demo:
 
     async def user_submit(user_message: str, history: List[dict]):  # type: ignore[override]
         if not user_message or not user_message.strip():
-            return gr.update(), history, gr.update(value="")
+            return gr.update(), gr.update(), gr.update(value="")
         history = history + [{"role": "user", "content": user_message}]
         answer, cites = await _answer_once(user_message)
         history = history + [{"role": "assistant", "content": answer}]

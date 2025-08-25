@@ -40,11 +40,11 @@ from chromadb.config import Settings as ChromaSettings
 load_dotenv()
 
 # Tunables
-TOP_K = int(os.getenv("TOP_K", 5))
+TOP_K = int(os.getenv("TOP_K", 10))
 USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
-USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
+USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
-USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
+USE_RERANK = os.getenv("USE_RERANK", "false").lower() == "true"
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
@@ -210,7 +210,7 @@ def build_retriever(filters: Optional[MetadataFilters] = None) -> BaseRetriever:
 
 
 def _compute_rerank_top_n(top_k: int, use_rerank: bool) -> Optional[int]:
-    return min(12, max(1, top_k)) if use_rerank else None
+    return min(5, max(1, top_k)) if use_rerank else None
 
 
 def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
@@ -219,6 +219,7 @@ def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
     try:
         top_n = _compute_rerank_top_n(TOP_K, USE_RERANK)
         if top_n and SentenceTransformerRerank is not None:
+            logging.info("Using SentenceTransformerRerank with top_n=%d", top_n)
             node_postprocessors.append(
                 SentenceTransformerRerank(top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2")
             )
@@ -385,7 +386,7 @@ def public_build_node_postprocessors() -> List[BaseNodePostprocessor]:
 
 # ----------------------------- Warmup helpers -----------------------------
 def warmup(
-    *, ensure_index: bool = True, preload_bm25: bool = True, preload_reranker: bool = True
+    *, ensure_index: bool = True, preload_bm25: bool = USE_FUSION, preload_reranker: bool = USE_RERANK
 ) -> None:
     """Warm heavy parts to reduce first-request latency."""
     configure_settings()
