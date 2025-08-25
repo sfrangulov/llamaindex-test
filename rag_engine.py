@@ -24,8 +24,7 @@ from llama_index.core.postprocessor import (
     SentenceTransformerRerank,
 )
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
-from llama_index.core.retrievers import QueryFusionRetriever, BaseRetriever
-from llama_index.retrievers.bm25 import BM25Retriever
+from llama_index.core.retrievers import BaseRetriever
 
 # Providers
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -41,9 +40,7 @@ load_dotenv()
 
 # Tunables
 TOP_K = int(os.getenv("TOP_K", 10))
-USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
-PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "false").lower() == "true"
 USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
@@ -83,7 +80,6 @@ _db: Optional[chromadb.PersistentClient] = None
 _vector_store: Optional[ChromaVectorStore] = None
 _storage_context: Optional[StorageContext] = None
 _index: Optional[VectorStoreIndex] = None
-_bm25_nodes_cache: Optional[List[Any]] = None
 
 
 def _get_db() -> chromadb.PersistentClient:
@@ -165,43 +161,9 @@ def get_index() -> VectorStoreIndex:
         _index = VectorStoreIndex.from_vector_store(_get_vector_store(), storage_context=sc)
     return _index
 
-
-def _load_nodes_for_bm25() -> List[Any]:
-    documents = _load_documents_with_metadata()
-    return Settings.node_parser.get_nodes_from_documents(documents)
-
-
-def _filter_nodes(nodes: List[Any], filters: Optional[MetadataFilters]) -> List[Any]:
-    if not filters or not getattr(filters, "filters", None):
-        return nodes
-    result: List[Any] = []
-    for n in nodes:
-        meta = getattr(n, "metadata", None) or getattr(getattr(n, "node", None), "metadata", {}) or {}
-        if all(meta.get(f.key) == f.value for f in filters.filters):
-            result.append(n)
-    return result
-
-
-def _get_bm25_retriever(filters: Optional[MetadataFilters]) -> BM25Retriever:
-    global _bm25_nodes_cache
-    if _bm25_nodes_cache is None:
-        _bm25_nodes_cache = _load_nodes_for_bm25()
-    nodes = _filter_nodes(_bm25_nodes_cache, filters)
-    return BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=TOP_K)
-
-
 def build_retriever(filters: Optional[MetadataFilters] = None) -> BaseRetriever:
     idx = get_index()
     dense = idx.as_retriever(similarity_top_k=TOP_K, filters=filters)
-    if USE_FUSION:
-        bm25 = _get_bm25_retriever(filters)
-        return QueryFusionRetriever(
-            retrievers=[dense, bm25],
-            similarity_top_k=TOP_K,
-            num_queries=1,
-            mode="reciprocal_rerank",
-            use_async=True,
-        )
     return dense
 
 
@@ -328,15 +290,12 @@ async def search_documents(
     t0 = time.time()
 
     try:
-        if USE_HYDE and PARALLEL_HYDE:
+        if USE_HYDE:
             base_task = asyncio.create_task(retriever.aretrieve(query))  # type: ignore
             hyde_task = asyncio.create_task(_generate_hyde_text(query))
             base_nodes, hyde_text = await asyncio.gather(base_task, hyde_task)
             hyde_nodes = await retriever.aretrieve(hyde_text)  # type: ignore
             nodes = _merge_nodes_by_score([base_nodes, hyde_nodes], TOP_K)
-        elif USE_HYDE:
-            hyde_text = await _generate_hyde_text(query)
-            nodes = await retriever.aretrieve(hyde_text)  # type: ignore
         else:
             nodes = await retriever.aretrieve(query)  # type: ignore
 
@@ -382,7 +341,7 @@ def public_build_node_postprocessors() -> List[BaseNodePostprocessor]:
 
 # ----------------------------- Warmup helpers -----------------------------
 def warmup(
-    *, ensure_index: bool = True, preload_bm25: bool = USE_FUSION, preload_reranker: bool = USE_RERANK
+    *, ensure_index: bool = True, preload_reranker: bool = USE_RERANK
 ) -> None:
     """Warm heavy parts to reduce first-request latency."""
     configure_settings()
@@ -391,14 +350,9 @@ def warmup(
             _ = get_index()
         except Exception as e:
             logging.warning("Warmup get_index failed: %s", e)
-    if preload_bm25:
-        try:
-            _ = _get_bm25_retriever(None)
-        except Exception as e:
-            logging.warning("Warmup BM25 failed: %s", e)
     if preload_reranker:
         try:
             _ = _build_node_postprocessors()
         except Exception as e:
             logging.warning("Warmup reranker failed: %s", e)
-    logging.info("Warmup done (index=%s, bm25=%s, reranker=%s)", ensure_index, preload_bm25, preload_reranker)
+    logging.info("Warmup done (index=%s, reranker=%s)", ensure_index, preload_reranker)
