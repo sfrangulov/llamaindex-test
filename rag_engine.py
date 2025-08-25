@@ -26,12 +26,7 @@ from llama_index.core.postprocessor import (
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.node_parser import MarkdownNodeParser
-try:
-    # LlamaIndex >=0.10 style
-    from llama_index.core.prompts import PromptTemplate  # type: ignore
-except Exception:  # pragma: no cover - compatibility fallback
-    # Some older versions
-    from llama_index.core import PromptTemplate  # type: ignore
+from llama_index.core.prompts import PromptTemplate  # type: ignore
 
 # Providers
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -41,6 +36,11 @@ from llama_index.llms.google_genai import GoogleGenAI
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 # ---------------------------- Configuration ----------------------------
@@ -241,11 +241,7 @@ def _synthesizer():
         "Контекст:\n{context_str}\n\n"
         "Вопрос пользователя:\n{query_str}\n\n" 
     )
-    try:
-        text_qa_template = PromptTemplate(template_str)
-    except Exception:
-        logging.warning("PromptTemplate unavailable, using default response synthesizer template")
-        text_qa_template = None
+    text_qa_template = PromptTemplate(template_str)
 
     return get_response_synthesizer(
         llm=Settings.llm,
