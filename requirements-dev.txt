@@ -1,5 +1,0 @@
-# Dev tools only; not required at runtime
-ruff==0.5.7          # fast linter/formatter (PEP8/pyflakes, isort)
-black==24.10.0       # code formatter
-mypy==1.13.0         # optional type checking
-pytest==8.3.2        # test runner
