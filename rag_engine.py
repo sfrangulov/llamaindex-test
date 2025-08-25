@@ -54,7 +54,8 @@ PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser)."""
-    Settings.embed_model = GoogleGenAIEmbedding(model_name="gemini-embedding-001")
+    Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
+    # Settings.embed_model = GoogleGenAIEmbedding(model_name="gemini-embedding-001")
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
     node_parser = MarkdownNodeParser()
     Settings.node_parser = node_parser
@@ -240,8 +241,6 @@ async def search_documents(
     file_name: Optional[str] = None,
 ) -> str:
     """Search and return JSON answer + sources."""
-    configure_settings()
-    _ = get_index()
 
     filters = _make_filters(file_name=file_name)
     metadata_filters = MetadataFilters(filters=filters) if filters else None
