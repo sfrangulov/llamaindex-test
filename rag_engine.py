@@ -71,7 +71,6 @@ def configure_settings() -> None:
     # Set models explicitly to avoid default OpenAI resolution
     Settings.embed_model = GoogleGenAIEmbedding(
         model_name="text-embedding-004",
-        embed_batch_size=256,
     )
     Settings.llm = GoogleGenAI(
         model="gemini-2.5-flash",
