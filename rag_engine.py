@@ -25,6 +25,7 @@ from llama_index.core.postprocessor import (
 )
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.node_parser import MarkdownNodeParser
 
 # Providers
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -45,34 +46,19 @@ USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
+DATA_PATH = os.getenv("DATA_PATH", "./data")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "test")
+CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "knowledge_base")
 PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser)."""
-    Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
+    Settings.embed_model = GoogleGenAIEmbedding(model_name="gemini-embedding-001")
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
-    Settings.node_parser = _make_node_parser()
-
-
-def _make_node_parser():
-    """Prefer Markdown parser; fallback to SentenceSplitter."""
-    choice = os.getenv("NODE_PARSER", "markdown").lower()
-    if choice in ("markdown", "md"):
-        try:
-            from llama_index.core.node_parser import MarkdownNodeParser  # type: ignore
-
-            return MarkdownNodeParser()
-        except Exception as e:
-            logging.warning("MarkdownNodeParser unavailable, using SentenceSplitter: %s", e)
-    return SentenceSplitter(chunk_size=700, chunk_overlap=120)
-
-
-def infer_language(text: str) -> str:
-    """Cyrillic -> ru, else en."""
-    return "ru" if any("\u0400" <= ch <= "\u04FF" for ch in text) else "en"
+    node_parser = MarkdownNodeParser()
+    Settings.node_parser = node_parser
+    Settings.transformations = [node_parser]
 
 
 # ---------------------------- Storage / Index ----------------------------
@@ -121,9 +107,9 @@ def _load_documents_with_metadata() -> List[Any]:
     """
     try:
         reader = SimpleDirectoryReader(
-            input_dir="data",
+            input_dir=DATA_PATH,
             recursive=True,
-            required_exts=[".md", ".markdown", ".txt"],  # newer LlamaIndex
+            required_exts=[".md"],  # newer LlamaIndex
         )
     except TypeError:
         # Older versions may use different arg name
@@ -132,14 +118,6 @@ def _load_documents_with_metadata() -> List[Any]:
         except Exception:
             reader = SimpleDirectoryReader("data")
     documents = reader.load_data()
-    for d in documents:
-        d.metadata.setdefault(
-            "file_name",
-            d.metadata.get("file_name") or d.metadata.get("filename") or "unknown",
-        )
-        d.metadata.setdefault("section", "unknown")
-        d.metadata.setdefault("version", "v1")
-        d.metadata.setdefault("lang", infer_language(d.text or ""))
     return documents
 
 
@@ -211,19 +189,10 @@ async def _generate_hyde_text(user_query: str) -> str:
 def _make_filters(
     *,
     file_name: Optional[str],
-    section: Optional[str],
-    lang: Optional[str],
-    version: Optional[str],
 ) -> List[ExactMatchFilter]:
     filters: List[ExactMatchFilter] = []
     if file_name:
         filters.append(ExactMatchFilter(key="file_name", value=file_name))
-    if section:
-        filters.append(ExactMatchFilter(key="section", value=section))
-    if lang:
-        filters.append(ExactMatchFilter(key="lang", value=lang))
-    if version:
-        filters.append(ExactMatchFilter(key="version", value=version))
     return filters
 
 
@@ -238,11 +207,7 @@ def _build_sources(response) -> List[Dict[str, Any]]:
         sources.append(
             {
                 "score": score_val,
-                "file_name": meta.get("file_name") or meta.get("filename"),
-                "section": meta.get("section"),
-                "lang": meta.get("lang"),
-                "version": meta.get("version"),
-                "window": meta.get("window"),
+                "file_name": meta.get("file_name"),
                 "text": sn.node.get_content(metadata_mode=MetadataMode.NONE),
             }
         )
@@ -273,15 +238,12 @@ async def search_documents(
     query: str,
     *,
     file_name: Optional[str] = None,
-    section: Optional[str] = None,
-    lang: Optional[str] = None,
-    version: Optional[str] = None,
 ) -> str:
     """Search and return JSON answer + sources."""
     configure_settings()
     _ = get_index()
 
-    filters = _make_filters(file_name=file_name, section=section, lang=lang, version=version)
+    filters = _make_filters(file_name=file_name)
     metadata_filters = MetadataFilters(filters=filters) if filters else None
     retriever = build_retriever(metadata_filters)
     postprocessors = _build_node_postprocessors()
@@ -330,9 +292,9 @@ def public_compute_rerank_top_n(top_k: int, use_rerank: bool) -> Optional[int]:
 
 
 def public_make_filters(
-    *, file_name: Optional[str], section: Optional[str], lang: Optional[str], version: Optional[str]
+    *, file_name: Optional[str]
 ) -> List[ExactMatchFilter]:
-    return _make_filters(file_name=file_name, section=section, lang=lang, version=version)
+    return _make_filters(file_name=file_name)
 
 
 def public_build_node_postprocessors() -> List[BaseNodePostprocessor]:

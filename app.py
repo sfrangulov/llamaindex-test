@@ -41,9 +41,6 @@ load_dotenv()
 # Thin wrapper over rag_engine to reduce import side-effects and centralize logic
 from rag_engine import (
     search_documents,
-    public_compute_rerank_top_n as _compute_rerank_top_n,
-    public_make_filters as _make_filters,
-    public_build_node_postprocessors as _build_node_postprocessors,
     warmup,
 )
 
