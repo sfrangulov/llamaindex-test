@@ -58,7 +58,7 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
         return pattern.sub(r"<mark>\1</mark>", text)
 
     parts: List[str] = []
-    parts.append(f"Найдено источников: {len(rows)}\n")
+    parts.append(f"Источники: {len(rows)}\n")
     for i, (title, snippet) in enumerate(rows, start=1):
         # Collapsible block per source; allow raw HTML in Markdown
         parts.append(
@@ -85,24 +85,26 @@ with gr.Blocks(title="Поиск по документам") as demo:
             with gr.Row():
                 send = gr.Button("Отправить", variant="primary")
                 clear = gr.Button("Очистить")
-        with gr.Column(scale=2):
-            gr.Markdown("### Источники")
-            sources = gr.Markdown(value="", elem_id="sources")
 
     async def user_submit(user_message: str, history: List[dict]):  # type: ignore[override]
         if not user_message or not user_message.strip():
-            return gr.update(), gr.update(), gr.update(value="")
+            return gr.update(), gr.update(value="")
         history = history + [{"role": "user", "content": user_message}]
         answer, cites = await _answer_once(user_message)
-        history = history + [{"role": "assistant", "content": answer}]
-        return gr.update(value=history), _format_sources_md(cites, user_message), gr.update(value="")
+        sources_md = _format_sources_md(cites, user_message)
+        # Also include context inside the assistant's chat bubble
+        assistant_content = answer
+        if sources_md:
+            assistant_content = f"{answer}\n\n---\n\n{sources_md}"
+        history = history + [{"role": "assistant", "content": assistant_content}]
+        return gr.update(value=history), gr.update(value="")
 
     def on_clear():
-        return [], "", ""
+        return [], ""
 
-    send.click(user_submit, [msg, chat], [chat, sources, msg])
-    msg.submit(user_submit, [msg, chat], [chat, sources, msg])
-    clear.click(on_clear, None, [chat, sources, msg])
+    send.click(user_submit, [msg, chat], [chat, msg])
+    msg.submit(user_submit, [msg, chat], [chat, msg])
+    clear.click(on_clear, None, [chat, msg])
 
 
 if __name__ == "__main__":
