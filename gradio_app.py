@@ -1,6 +1,5 @@
 import os
 import json
-import html
 import logging
 from typing import List, Tuple
 
@@ -40,17 +39,14 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         return f"Ошибка: {e}", []
 
 
-def _format_sources_html(rows: List[Tuple[str, str]]) -> str:
+def _format_sources_md(rows: List[Tuple[str, str]]) -> str:
+    """Render sources as Markdown, preserving snippet markdown formatting."""
     if not rows:
         return ""
-    items = []
+    parts: List[str] = []
     for title, snippet in rows:
-        safe_title = html.escape(title)
-        safe_snippet = html.escape(snippet)
-        items.append(
-            f"<div style='margin-bottom: 8px'><b>{safe_title}</b><br><small>{safe_snippet}</small></div>"
-        )
-    return "".join(items)
+        parts.append(f"**{title}**\n\n{snippet}\n\n---")
+    return "\n".join(parts)
 
 
 # --------------- Chat Logic ---------------
@@ -64,7 +60,7 @@ with gr.Blocks(title="Docs Chat") as demo:
             clear = gr.Button("Очистить")
         with gr.Column(scale=2):
             gr.Markdown("### Источники")
-            sources = gr.HTML(value="", label="Цитаты", elem_id="sources")
+            sources = gr.Markdown(value="", elem_id="sources")
 
     async def user_submit(user_message: str, history: List[dict]):  # type: ignore[override]
         if not user_message or not user_message.strip():
@@ -72,7 +68,7 @@ with gr.Blocks(title="Docs Chat") as demo:
         history = history + [{"role": "user", "content": user_message}]
         answer, cites = await _answer_once(user_message)
         history = history + [{"role": "assistant", "content": answer}]
-        return gr.update(value=history), _format_sources_html(cites), gr.update(value="")
+        return gr.update(value=history), _format_sources_md(cites), gr.update(value="")
 
     def on_clear():
         return [], "", ""

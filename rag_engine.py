@@ -42,10 +42,10 @@ from chromadb.config import Settings as ChromaSettings
 # ---------------------------- Configuration ----------------------------
 load_dotenv()
 
-TOP_K = int(os.getenv("TOP_K", 15))
+TOP_K = int(os.getenv("TOP_K", 5))
 USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
-USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
-USE_RERANK = os.getenv("USE_RERANK", "false").lower() == "true"
+USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
+USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
