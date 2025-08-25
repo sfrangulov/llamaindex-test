@@ -39,11 +39,13 @@ All variables are optional unless noted otherwise.
 - PARALLEL_HYDE (true) — run HyDE in parallel with base retrieval
 - USE_RERANK (true) — cross‑encoder rerank
 - RESPONSE_MODE (compact) — response synthesis mode
+- SYSTEM_PROMPT (empty) — дополнительный системный промт, который будет встроен в шаблон ответа
 - NODE_PARSER (markdown|markdown_element|sentence, default markdown) — choose node parser
 - CHROMA_PATH (./chroma_db) — Chroma path
 - CHROMA_COLLECTION (test) — Chroma collection name
 - PERSIST_DIR (./storage) — LlamaIndex docstore/index directory
 - AGENT_ENABLED (false) — enable agent mode
+- AGENT_SYSTEM_PROMPT (preset) — системный промт для AgentWorkflow
 - LOG_LEVEL (INFO) — logging level
 
 Example `.env`:
@@ -56,6 +58,7 @@ USE_HYDE=true
 PARALLEL_HYDE=true
 USE_RERANK=true
 RESPONSE_MODE=compact
+SYSTEM_PROMPT=Ты — эксперт по внутренней документации компании. Отвечай кратко, по делу, на русском, приводя цитаты при необходимости.
 CHROMA_PATH=./chroma_db
 CHROMA_COLLECTION=test
 PERSIST_DIR=./storage

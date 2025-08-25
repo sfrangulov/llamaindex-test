@@ -26,6 +26,12 @@ from llama_index.core.postprocessor import (
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.node_parser import MarkdownNodeParser
+try:
+    # LlamaIndex >=0.10 style
+    from llama_index.core.prompts import PromptTemplate  # type: ignore
+except Exception:  # pragma: no cover - compatibility fallback
+    # Some older versions
+    from llama_index.core import PromptTemplate  # type: ignore
 
 # Providers
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -55,7 +61,6 @@ PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser)."""
-    # Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
     Settings.embed_model = GoogleGenAIEmbedding(
         model_name="gemini-embedding-001",          # новое имя модели
         embed_batch_size=100,
@@ -225,7 +230,29 @@ def _build_sources(response) -> List[Dict[str, Any]]:
 
 
 def _synthesizer():
-    return get_response_synthesizer(llm=Settings.llm, response_mode=RESPONSE_MODE, use_async=True)
+    # If a system prompt is provided, build a custom QA template that embeds it.
+    text_qa_template = None
+    template_str = (
+        "Инструкции:\n"
+        "- Отвечай на русском языке.\n"
+        "- Отвечай по делу и только по предоставленному контексту.\n"
+        "- Если информации недостаточно — скажи об этом явно.\n"
+        "- Приводи короткие цитаты в кавычках при необходимости.\n\n"
+        "Контекст:\n{context_str}\n\n"
+        "Вопрос пользователя:\n{query_str}\n\n" 
+    )
+    try:
+        text_qa_template = PromptTemplate(template_str)
+    except Exception:
+        logging.warning("PromptTemplate unavailable, using default response synthesizer template")
+        text_qa_template = None
+
+    return get_response_synthesizer(
+        llm=Settings.llm,
+        response_mode=RESPONSE_MODE,
+        use_async=True,
+        text_qa_template=text_qa_template,
+    )
 
 
 def _merge_nodes_by_score(nodes_lists: List[List[Any]], limit: int) -> List[Any]:
