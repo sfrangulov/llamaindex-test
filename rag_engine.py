@@ -44,7 +44,8 @@ TOP_K = int(os.getenv("TOP_K", 10))
 USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
 USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "false").lower() == "true"
-USE_RERANK = os.getenv("USE_RERANK", "false").lower() == "true"
+USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
+RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
@@ -54,12 +55,7 @@ PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser)."""
-    # Smaller embed batch to avoid provider payload limits
-    try:
-        Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004", embed_batch_size=32)  # type: ignore[arg-type]
-    except TypeError:
-        # Fallback if older lib doesn't support embed_batch_size
-        Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
+    Settings.embed_model = GoogleGenAIEmbedding(model_name="text-embedding-004")
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
     Settings.node_parser = _make_node_parser()
 
@@ -221,7 +217,7 @@ def _build_node_postprocessors() -> List[BaseNodePostprocessor]:
         if top_n and SentenceTransformerRerank is not None:
             logging.info("Using SentenceTransformerRerank with top_n=%d", top_n)
             node_postprocessors.append(
-                SentenceTransformerRerank(top_n=top_n, model="cross-encoder/ms-marco-MiniLM-L-6-v2")
+                SentenceTransformerRerank(top_n=top_n, model=RERANK_MODEL)
             )
     except Exception as e:
         logging.warning("Reranker init failed: %s", e)
