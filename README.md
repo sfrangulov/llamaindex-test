@@ -39,6 +39,7 @@ All variables are optional unless noted otherwise.
 - PARALLEL_HYDE (true) — run HyDE in parallel with base retrieval
 - USE_RERANK (true) — cross‑encoder rerank
 - RESPONSE_MODE (compact) — response synthesis mode
+- NODE_PARSER (markdown|markdown_element|sentence, default markdown) — choose node parser
 - CHROMA_PATH (./chroma_db) — Chroma path
 - CHROMA_COLLECTION (test) — Chroma collection name
 - PERSIST_DIR (./storage) — LlamaIndex docstore/index directory
@@ -60,6 +61,7 @@ CHROMA_COLLECTION=test
 PERSIST_DIR=./storage
 AGENT_ENABLED=false
 LOG_LEVEL=INFO
+NODE_PARSER=markdown
 ```
 
 ## Quick start
@@ -110,6 +112,7 @@ The integration test uses MockLLM and BM25 for an offline run.
 - Higher answer quality: increase `TOP_K`, enable `USE_HYDE` and `USE_RERANK`
 - Lower latency: disable HyDE/rerank, reduce `TOP_K`
 - If needed, you can disable Chroma telemetry via `PersistentClient(..., settings=...)`
+- Markdown parsing: `NODE_PARSER=markdown` tries a Markdown-aware parser to split by headings/lists; set `NODE_PARSER=markdown_element` for finer-grained elements, or `sentence` to revert to sentence-based chunks.
 
 ## Troubleshooting
 
