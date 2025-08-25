@@ -81,13 +81,12 @@ with gr.Blocks(title="Поиск по документам") as demo:
     with gr.Row():
         with gr.Column(scale=3):
             chat = gr.Chatbot(height=350, show_copy_button=True, type="messages")
-            msg = gr.Textbox(placeholder="Задайте вопрос по документации…", label="Сообщение", lines=2)
+            msg = gr.Textbox(placeholder="Задайте вопрос по документации…", show_label=False, lines=2)
             with gr.Row():
                 send = gr.Button("Отправить", variant="primary")
                 clear = gr.Button("Очистить")
 
             # Quick start hints
-            gr.Markdown("#### Подсказки для старта")
             with gr.Row():
                 hint1 = gr.Button("Как оформить документ «Оприходование излишков товаров»?")
                 hint2 = gr.Button("Как рассчитать коэффициент вскрыши по плановым данным?")
@@ -113,16 +112,10 @@ with gr.Blocks(title="Поиск по документам") as demo:
     msg.submit(user_submit, [msg, chat], [chat, msg])
     clear.click(on_clear, None, [chat, msg])
 
-    # Hint buttons: prefill message and auto-send
-    hint1.click(lambda: "Как оформить документ «Оприходование излишков товаров»?", None, msg).then(
-        user_submit, [msg, chat], [chat, msg]
-    )
-    hint2.click(lambda: "Как рассчитать коэффициент вскрыши по плановым данным?", None, msg).then(
-        user_submit, [msg, chat], [chat, msg]
-    )
-    hint3.click(lambda: "Как загрузить проводки из Excel в документ «Операция»?", None, msg).then(
-        user_submit, [msg, chat], [chat, msg]
-    )
+    # Hint buttons: prefill message only (no auto-send)
+    hint1.click(lambda: "Как оформить документ «Оприходование излишков товаров»?", None, msg)
+    hint2.click(lambda: "Как рассчитать коэффициент вскрыши по плановым данным?", None, msg)
+    hint3.click(lambda: "Как загрузить проводки из Excel в документ «Операция»?", None, msg)
 
 
 if __name__ == "__main__":
