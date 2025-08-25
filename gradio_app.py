@@ -15,6 +15,41 @@ from rag_engine import search_documents, warmup
 import gradio as gr
 
 
+# --------------- Theming (light/dark) ---------------
+# Adapt highlight colors for day/night themes. We style the <mark> tag used in snippets.
+APP_CSS = """
+:root {
+    --hl-bg: #fff3a6;   /* soft amber for light */
+    --hl-fg: #1a1a1a;   /* dark text on light */
+    --hl-border: #e9d26a;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --hl-bg: #3a2f00; /* deep amber for dark */
+        --hl-fg: #fff7cc; /* warm light text */
+        --hl-border: #6b5d00;
+    }
+}
+
+/* Also handle explicit dark themes if Gradio sets a data-theme */
+html[data-theme*="dark"] :root {
+    --hl-bg: #3a2f00;
+    --hl-fg: #fff7cc;
+    --hl-border: #6b5d00;
+}
+
+/* Highlight style */
+mark {
+    background-color: var(--hl-bg);
+    color: var(--hl-fg);
+    padding: 0 0.15em;
+    border-radius: 0.2em;
+    border: 1px solid var(--hl-border);
+}
+"""
+
+
 # --------------- Helpers ---------------
 async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
     """Call search_documents and format answer + sources."""
@@ -76,7 +111,7 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 
 
 # --------------- Chat Logic ---------------
-with gr.Blocks(title="Поиск по документам") as demo:
+with gr.Blocks(title="Поиск по документам", css=APP_CSS) as demo:
     with gr.Row():
         with gr.Column(scale=3):
             chat = gr.Chatbot(height=450, show_copy_button=True, type="messages")
@@ -88,7 +123,7 @@ with gr.Blocks(title="Поиск по документам") as demo:
             # Quick start hints
             with gr.Row():
                 hint1 = gr.Button("Как оформить документ «Оприходование излишков товаров»?")
-                hint2 = gr.Button("Как рассчитать коэффициент вскрыши по плановым данным?")
+                hint2 = gr.Button("Как рассчитать плановые коэффициенты вскрыши?")
                 hint3 = gr.Button("Как загрузить проводки из Excel в документ «Операция»?")
 
     async def user_submit(user_message: str, history: List[dict]):  # type: ignore[override]
