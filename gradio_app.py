@@ -2,8 +2,7 @@ import os
 import json
 import html
 import logging
-import asyncio
-from typing import List, Tuple, Any
+from typing import List, Tuple
 
 from dotenv import load_dotenv
 
@@ -11,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Local imports kept light to avoid heavy side-effects at import time
-from rag_engine import search_documents
+from rag_engine import search_documents, warmup
 
 import gradio as gr
 
@@ -84,5 +83,5 @@ with gr.Blocks(title="Docs Chat") as demo:
 
 
 if __name__ == "__main__":
-    # Launch Gradio app
+    warmup()
     demo.queue().launch(server_name=os.getenv("HOST", "0.0.0.0"), server_port=int(os.getenv("PORT", "7860")))

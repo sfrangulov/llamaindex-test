@@ -43,9 +43,9 @@ from chromadb.config import Settings as ChromaSettings
 load_dotenv()
 
 TOP_K = int(os.getenv("TOP_K", 15))
-USE_FUSION = os.getenv("USE_FUSION", "true").lower() == "true"
-USE_HYDE = os.getenv("USE_HYDE", "true").lower() == "true"
-USE_RERANK = os.getenv("USE_RERANK", "true").lower() == "true"
+USE_FUSION = os.getenv("USE_FUSION", "false").lower() == "true"
+USE_HYDE = os.getenv("USE_HYDE", "false").lower() == "true"
+USE_RERANK = os.getenv("USE_RERANK", "false").lower() == "true"
 PARALLEL_HYDE = os.getenv("PARALLEL_HYDE", "true").lower() == "true"
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
 
@@ -469,3 +469,44 @@ def public_build_node_postprocessors() -> List[BaseNodePostprocessor]:
     # Try to pass docstore if index is already initialized; otherwise let it skip gracefully
     docstore = _index.docstore if _index is not None else None  # type: ignore[attr-defined]
     return _build_node_postprocessors(docstore)
+
+
+# ----------------------------- Warmup helpers -----------------------------
+def warmup(
+    *,
+    ensure_index: bool = True,
+    preload_bm25: bool = True,
+    preload_reranker: bool = True,
+) -> None:
+    """Warm up heavy components to avoid first-request latency spikes.
+
+    - ensure_index: build/load VectorStoreIndex (may embed on very first run)
+    - preload_bm25: parse docs to nodes and initialize BM25 retriever cache
+    - preload_reranker: instantiate cross-encoder reranker to trigger model load
+    """
+    try:
+        configure_settings()
+        if ensure_index:
+            try:
+                # This may build the index and persist it on the very first run
+                _ = get_index()
+            except Exception as e:
+                logging.warning("Warmup: get_index failed: %s", e)
+        if preload_bm25:
+            try:
+                _ = _get_bm25_retriever(None)
+            except Exception as e:
+                logging.warning("Warmup: BM25 init failed: %s", e)
+        if preload_reranker:
+            try:
+                _ = _build_node_postprocessors()
+            except Exception as e:
+                logging.warning("Warmup: reranker init failed: %s", e)
+        logging.info(
+            "Warmup completed (index=%s, bm25=%s, reranker=%s)",
+            ensure_index,
+            preload_bm25,
+            preload_reranker,
+        )
+    except Exception as e:
+        logging.warning("Warmup encountered an error: %s", e)

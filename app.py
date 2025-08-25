@@ -45,6 +45,7 @@ from rag_engine import (
     public_compute_rerank_top_n as _compute_rerank_top_n,
     public_make_filters as _make_filters,
     public_build_node_postprocessors as _build_node_postprocessors,
+    warmup,
 )
 
 
@@ -74,6 +75,11 @@ if AGENT_ENABLED:
 async def main():
     query = sys.argv[1] if len(sys.argv) > 1 else "Что такое предмет разработки?"
     logging.info("Running with query: %s", query)
+    # Synchronous warmup to reduce first-request latency
+    try:
+        warmup()
+    except Exception as e:
+        logging.warning("Warmup failed: %s", e)
     if AGENT_ENABLED and agent is not None:
         try:
             agent_resp = await agent.run(query, max_iterations=1)

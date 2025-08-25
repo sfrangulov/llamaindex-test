@@ -3,8 +3,10 @@ llama-index-vector-stores-chroma  # ChromaVectorStore integration
 llama-index-llms-google-genai     # GoogleGenAI LLM driver
 llama-index-embeddings-google-genai  # GoogleGenAIEmbedding for text-embedding-004
 llama-index-retrievers-bm25       # BM25Retriever for sparse retrieval
+llama-index-readers-file
 chromadb                  # PersistentClient for vector DB
 python-dotenv             # load_dotenv for env config
 sentence-transformers     # optional reranker: SentenceTransformerRerank
 colorlog                 # colored logging output          # audioop shim for Python 3.13 used by pydub/gradio
 gradio
+openpyxl
