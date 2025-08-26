@@ -1,3 +1,9 @@
+import os
+import time
+import json
+import logging
+from typing import Any, Dict, List
+
 from storage import get_index
 from llama_index.llms.google_genai import GoogleGenAI
 from google.genai.types import EmbedContentConfig
@@ -15,18 +21,14 @@ from llama_index.core.node_parser import MarkdownNodeParser
 from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.core.schema import MetadataMode
 from llama_index.core import Settings
-import os
-import time
-import json
-import logging
-from typing import Any, Dict, List
+from llama_index.core.postprocessor.llm_rerank import LLMRerank
 
 from dotenv import load_dotenv
 load_dotenv()
 
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
@@ -114,9 +116,9 @@ class RetrievedEvent(Event):
     nodes: List[Any]
 
 
-class PostprocessedEvent(Event):
+class RerankEvent(Event):
     query: str
-    nodes: List[Any]
+    nodes: list[Any]
 
 
 class SynthEvent(Event):
@@ -149,7 +151,8 @@ class RagWorkflow(Workflow):
         """Transform the query for RAG using LLM to keep only the essence."""
         rag_query = ev.query
         try:
-            prompt = PromptTemplate(reformulate_template).format(query=ev.query)
+            prompt = PromptTemplate(
+                reformulate_template).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
             logging.debug(
                 "RAG query transform | input=%s | output=%s", ev.query, resp)
@@ -172,7 +175,14 @@ class RagWorkflow(Workflow):
         return RetrievedEvent(query=ev.query, nodes=nodes)
 
     @step
-    async def synthesize(self, ctx: Context, ev: RetrievedEvent) -> SynthEvent:
+    async def rerank(self, ctx: Context, ev: RetrievedEvent) -> RerankEvent:
+        """Rerank the nodes."""
+        ranker = LLMRerank()
+        new_nodes = ranker.postprocess_nodes(ev.nodes, query_str=ev.query)
+        return RerankEvent(nodes=new_nodes, query=ev.query)
+
+    @step
+    async def synthesize(self, ctx: Context, ev: RerankEvent) -> SynthEvent:
         """Generate final answer from nodes using a response synthesizer."""
         text_qa_template = PromptTemplate(query_template)
         synthesizer = get_response_synthesizer(
@@ -187,6 +197,7 @@ class RagWorkflow(Workflow):
     @step
     def finalize(self, ctx: Context, ev: SynthEvent) -> StopEvent:
         """Build payload and stop the workflow."""
+        print(ctx)
         sources = _build_sources(ev.response)
         payload: Dict[str, Any] = {
             "answer": str(ev.response), "sources": sources}
