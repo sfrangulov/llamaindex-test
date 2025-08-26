@@ -197,7 +197,6 @@ class RagWorkflow(Workflow):
     @step
     def finalize(self, ctx: Context, ev: SynthEvent) -> StopEvent:
         """Build payload and stop the workflow."""
-        print(ctx)
         sources = _build_sources(ev.response)
         payload: Dict[str, Any] = {
             "answer": str(ev.response), "sources": sources}
