@@ -1,3 +1,27 @@
+from storage import get_index
+from llama_index.llms.google_genai import GoogleGenAI
+from google.genai.types import EmbedContentConfig
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.core.workflow import (
+    Workflow,
+    Event,
+    step,
+    Context,
+    StartEvent,
+    StopEvent,
+)
+from llama_index.core.prompts import PromptTemplate
+from llama_index.core.node_parser import MarkdownNodeParser
+from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
+from llama_index.core.postprocessor import (
+    LongContextReorder,
+    SimilarityPostprocessor,
+)
+from llama_index.core.response_synthesizers import get_response_synthesizer
+from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
+from llama_index.core.schema import MetadataMode
+from llama_index.core import Settings
 import os
 import time
 import json
@@ -5,34 +29,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
+load_dotenv()
 
 # LlamaIndex core
-from llama_index.core import (
-    VectorStoreIndex,
-    SimpleDirectoryReader,
-    Settings,
-    StorageContext,
-)
-from llama_index.core.schema import MetadataMode
-from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
-from llama_index.core.response_synthesizers import get_response_synthesizer
-from llama_index.core.postprocessor import (
-    LongContextReorder,
-    SimilarityPostprocessor,
-)
-from llama_index.core.postprocessor.types import BaseNodePostprocessor
-from llama_index.core.retrievers import BaseRetriever
-from llama_index.core.node_parser import MarkdownNodeParser
-from llama_index.core.prompts import PromptTemplate  # type: ignore
+
+# Workflows
 
 # Providers
-from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-from google.genai.types import EmbedContentConfig
-from llama_index.llms.google_genai import GoogleGenAI
 
-import chromadb
-from chromadb.config import Settings as ChromaSettings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,16 +45,10 @@ logging.basicConfig(
 
 
 # ---------------------------- Configuration ----------------------------
-load_dotenv()
 
 # Tunables
 TOP_K = int(os.getenv("TOP_K", 10))
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
-
-DATA_PATH = os.getenv("DATA_PATH", "./data")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "knowledge_base")
-PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
 
 
 def configure_settings() -> None:
@@ -58,7 +56,7 @@ def configure_settings() -> None:
     Settings.embed_model = GoogleGenAIEmbedding(
         model_name="gemini-embedding-001",          # новое имя модели
         embed_batch_size=100,
-        embedding_config = EmbedContentConfig(
+        embedding_config=EmbedContentConfig(
             output_dimensionality=768,
             task_type="RETRIEVAL_DOCUMENT"
         )
@@ -66,84 +64,6 @@ def configure_settings() -> None:
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
     Settings.transformations = [MarkdownNodeParser()]
 
-
-# ---------------------------- Storage / Index ----------------------------
-_db: Optional[chromadb.PersistentClient] = None
-_vector_store: Optional[ChromaVectorStore] = None
-_storage_context: Optional[StorageContext] = None
-_index: Optional[VectorStoreIndex] = None
-
-
-def _get_db() -> chromadb.PersistentClient:
-    global _db
-    if _db is None:
-        _db = chromadb.PersistentClient(path=CHROMA_PATH, settings=ChromaSettings(anonymized_telemetry=False))
-    return _db
-
-
-def _get_vector_store() -> ChromaVectorStore:
-    global _vector_store
-    if _vector_store is None:
-        collection = _get_db().get_or_create_collection(CHROMA_COLLECTION)
-        _vector_store = ChromaVectorStore(chroma_collection=collection)
-    return _vector_store
-
-
-def _get_storage_context(load_persisted: bool = True) -> StorageContext:
-    global _storage_context
-    if _storage_context is not None:
-        return _storage_context
-    try:
-        if load_persisted:
-            _storage_context = StorageContext.from_defaults(
-                vector_store=_get_vector_store(), persist_dir=PERSIST_DIR
-            )
-        else:
-            raise RuntimeError("force rebuild")
-    except Exception:
-        logging.warning("StorageContext: no persisted state, creating fresh one")
-        _storage_context = StorageContext.from_defaults(vector_store=_get_vector_store())
-    return _storage_context
-
-
-def _load_documents_with_metadata() -> List[Any]:
-    """Load docs and fill key metadata fields.
-
-    Restrict to Markdown/text to avoid heavy Excel/others and reduce embedding payload.
-    """
-    try:
-        reader = SimpleDirectoryReader(
-            input_dir=DATA_PATH,
-            recursive=True,
-            required_exts=[".md"],  # newer LlamaIndex
-        )
-    except TypeError:
-        # Older versions may use different arg name
-        try:
-            reader = SimpleDirectoryReader("data", recursive=True)
-        except Exception:
-            reader = SimpleDirectoryReader("data")
-    documents = reader.load_data()
-    return documents
-
-
-def get_index() -> VectorStoreIndex:
-    global _index
-    if _index is not None:
-        return _index
-
-    collection = _get_db().get_or_create_collection(CHROMA_COLLECTION)
-    if collection.count() == 0:
-    # Build from documents
-        documents = _load_documents_with_metadata()
-        sc = _get_storage_context(load_persisted=False)
-        _index = VectorStoreIndex.from_documents(documents, storage_context=sc)
-        _index.storage_context.persist(persist_dir=PERSIST_DIR)
-    else:
-    # Load from vector store (and persisted docstore if available)
-        sc = _get_storage_context(load_persisted=True)
-        _index = VectorStoreIndex.from_vector_store(_get_vector_store(), storage_context=sc)
-    return _index
 
 def _build_retriever(filters: Optional[MetadataFilters] = None) -> BaseRetriever:
     idx = get_index()
@@ -176,7 +96,8 @@ def _build_sources(response) -> List[Dict[str, Any]]:
     for sn in getattr(response, "source_nodes", []) or []:
         meta = sn.node.metadata or {}
         try:
-            score_val = float(sn.score) if getattr(sn, "score", None) is not None else None
+            score_val = float(sn.score) if getattr(
+                sn, "score", None) is not None else None
         except Exception:
             score_val = None
         sources.append(
@@ -190,7 +111,7 @@ def _build_sources(response) -> List[Dict[str, Any]]:
     return sources
 
 
-def __build_synthesizer():
+def _build_synthesizer():
     # If a system prompt is provided, build a custom QA template that embeds it.
     text_qa_template = None
     template_str = (
@@ -200,7 +121,7 @@ def __build_synthesizer():
         "- Если информации недостаточно — скажи об этом явно.\n"
         "- Приводи короткие цитаты в кавычках при необходимости.\n\n"
         "Контекст:\n{context_str}\n\n"
-        "Вопрос пользователя:\n{query_str}\n\n" 
+        "Вопрос пользователя:\n{query_str}\n\n"
     )
     text_qa_template = PromptTemplate(template_str)
 
@@ -211,41 +132,111 @@ def __build_synthesizer():
         text_qa_template=text_qa_template,
     )
 
+# ---------------------------- Workflow Events ----------------------------
+
+
+class QueryEvent(Event):
+    query: str
+    file_name: Optional[str] = None
+
+
+class RetrievedEvent(Event):
+    query: str
+    nodes: List[Any]
+
+
+class PostprocessedEvent(Event):
+    query: str
+    nodes: List[Any]
+
+
+class SynthEvent(Event):
+    query: str
+    response: Any
+    nodes: List[Any]
+
+
+class RagWorkflow(Workflow):
+    """RAG pipeline implemented via llama_index.core.workflow."""
+
+    def __init__(self, timeout: int = 120) -> None:
+        super().__init__(timeout=timeout)
+
+    @step
+    async def start(self, ctx: Context, ev: StartEvent) -> QueryEvent | StopEvent:
+        """Entry point: read inputs from StartEvent and kick off retrieval."""
+        data = getattr(ev, "input", None) or {}
+        query = (data.get("query") or "").strip()
+        file_name = data.get("file_name")
+        if not query:
+            # immediately stop with empty result
+            return StopEvent(result={"answer": "", "sources": []})
+        # Ensure settings/index are ready before retrieval
+        try:
+            configure_settings()
+            _ = get_index()
+        except Exception as e:
+            logging.warning("Warmup in start() failed: %s", e)
+        return QueryEvent(query=query, file_name=file_name)
+
+    @step
+    async def retrieve(self, ctx: Context, ev: QueryEvent) -> RetrievedEvent:
+        """Retrieve candidate nodes using vector search with optional filters."""
+        filters = _make_filters(file_name=ev.file_name)
+        metadata_filters = MetadataFilters(
+            filters=filters) if filters else None
+        retriever = _build_retriever(metadata_filters)
+        nodes = await retriever.aretrieve(ev.query)
+        return RetrievedEvent(query=ev.query, nodes=nodes)
+
+    @step
+    def postprocess(self, ctx: Context, ev: RetrievedEvent) -> PostprocessedEvent:
+        """Apply node postprocessors (similarity cutoff, reordering)."""
+        nodes = ev.nodes
+        for p in _build_node_postprocessors():
+            try:
+                nodes = p.postprocess_nodes(nodes)
+            except Exception as e:
+                logging.warning("Postprocessor %s failed: %s",
+                                p.__class__.__name__, e)
+        return PostprocessedEvent(query=ev.query, nodes=nodes)
+
+    @step
+    async def synthesize(self, ctx: Context, ev: PostprocessedEvent) -> SynthEvent:
+        """Generate final answer from nodes using a response synthesizer."""
+        synth = _build_synthesizer()
+        response = await synth.asynthesize(ev.query, ev.nodes)
+        return SynthEvent(query=ev.query, response=response, nodes=ev.nodes)
+
+    @step
+    def finalize(self, ctx: Context, ev: SynthEvent) -> StopEvent:
+        """Build payload and stop the workflow."""
+        sources = _build_sources(ev.response)
+        payload: Dict[str, Any] = {
+            "answer": str(ev.response), "sources": sources}
+        return StopEvent(result=payload)
+
 
 async def search_documents(
     query: str,
     *,
     file_name: Optional[str] = None,
 ) -> str:
-    """Search and return JSON answer + sources."""
-
-    filters = _make_filters(file_name=file_name)
-    metadata_filters = MetadataFilters(filters=filters) if filters else None
-    retriever = _build_retriever(metadata_filters)
-    postprocessors = _build_node_postprocessors()
-    synth = __build_synthesizer()
+    """Search and return JSON answer + sources using a Workflow pipeline."""
 
     t0 = time.time()
-
+    # Run the workflow end-to-end
+    wf = RagWorkflow()
     try:
-        nodes = await retriever.aretrieve(query)  # type: ignore
-
-        for p in postprocessors:
-            try:
-                nodes = p.postprocess_nodes(nodes)  # type: ignore
-            except Exception as e:  # keep going if optional deps missing
-                logging.warning("Postprocessor %s failed: %s", p.__class__.__name__, e)
-
-        response = await synth.asynthesize(query, nodes)
+        result: Dict[str, Any] = await wf.run(input={"query": query, "file_name": file_name})
     except Exception as e:
-        logging.exception("Search failed, returning empty result: %s", e)
-        response = type("Empty", (), {"__str__": lambda self: "", "source_nodes": []})()
+        logging.exception("Workflow failed, returning empty result: %s", e)
+        result = {"answer": "", "sources": []}
 
     latency = time.time() - t0
-    sources = _build_sources(response)
-    logging.info("Found %d sources | %.2fs", len(sources), latency)
-    payload: Dict[str, Any] = {"answer": str(response), "sources": sources}
-    return json.dumps(payload, ensure_ascii=False)
+    logging.info("Workflow done | %ds | sources=%d", int(
+        latency), len(result.get("sources", []) or []))
+    return json.dumps(result, ensure_ascii=False)
 
 
 # ----------------------------- Warmup helpers -----------------------------
