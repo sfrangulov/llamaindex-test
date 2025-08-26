@@ -114,7 +114,7 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 with gr.Blocks(title="Поиск по документам", css=APP_CSS) as demo:
     with gr.Row():
         with gr.Column(scale=3):
-            chat = gr.Chatbot(height=450, show_copy_button=True, type="messages")
+            chat = gr.Chatbot(height=1000, show_copy_button=True, type="messages")
             msg = gr.Textbox(placeholder="Задайте вопрос по документации…", show_label=False, lines=2)
             with gr.Row():
                 send = gr.Button("Отправить", variant="primary")
@@ -122,7 +122,7 @@ with gr.Blocks(title="Поиск по документам", css=APP_CSS) as dem
 
             # Quick start hints
             with gr.Row():
-                hint1 = gr.Button("Как оформить документ «Оприходование излишков товаров»?")
+                hint1 = gr.Button("Как создать документ «Оприходование излишков товаров»?")
                 hint2 = gr.Button("Как рассчитать плановые коэффициенты вскрыши?")
                 hint3 = gr.Button("Как загрузить проводки из Excel в документ «Операция»?")
 
