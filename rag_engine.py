@@ -12,23 +12,21 @@ from llama_index.core.workflow import (
 )
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.node_parser import MarkdownNodeParser
-from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.response_synthesizers import get_response_synthesizer
-from llama_index.core.vector_stores.types import MetadataFilters, ExactMatchFilter
 from llama_index.core.schema import MetadataMode
 from llama_index.core import Settings
 import os
 import time
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 load_dotenv()
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
@@ -142,7 +140,7 @@ class RagWorkflow(Workflow):
             )
             prompt = PromptTemplate(template_str).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
-            logging.info("RAG query transform | input=%s | output=%s", ev.query, resp)
+            logging.debug("RAG query transform | input=%s | output=%s", ev.query, resp)
             candidate = (getattr(resp, "text", None) or "").strip()
             if candidate:
                 # remove surrounding quotes if any
@@ -207,7 +205,7 @@ async def search_documents(
         result = {"answer": "", "sources": []}
 
     latency = time.time() - t0
-    logging.info("Workflow done | %ds | sources=%d", int(
+    logging.debug("Workflow done | %ds | sources=%d", int(
         latency), len(result.get("sources", []) or []))
     return json.dumps(result, ensure_ascii=False)
 
@@ -223,4 +221,4 @@ def warmup(
             _ = get_index()
         except Exception as e:
             logging.warning("Warmup get_index failed: %s", e)
-    logging.info("Warmup done (index=%s)", ensure_index)
+    logging.debug("Warmup done (index=%s)", ensure_index)
