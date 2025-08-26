@@ -64,8 +64,7 @@ def configure_settings() -> None:
         )
     )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
-    node_parser = MarkdownNodeParser()
-    Settings.transformations = [node_parser]
+    Settings.transformations = [MarkdownNodeParser()]
 
 
 # ---------------------------- Storage / Index ----------------------------
