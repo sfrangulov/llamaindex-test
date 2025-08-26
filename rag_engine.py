@@ -230,15 +230,9 @@ async def search_documents(
     try:
         nodes = await retriever.aretrieve(query)  # type: ignore
 
-        # Provide a lightweight QueryBundle replacement so rerankers receive the query
-        class _QB:
-            def __init__(self, s: str) -> None:
-                self.query_str = s
-
-        qb = _QB(query)
         for p in postprocessors:
             try:
-                nodes = p.postprocess_nodes(nodes, query_bundle=qb)  # type: ignore
+                nodes = p.postprocess_nodes(nodes)  # type: ignore
             except Exception as e:  # keep going if optional deps missing
                 logging.warning("Postprocessor %s failed: %s", p.__class__.__name__, e)
 
