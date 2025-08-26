@@ -147,7 +147,7 @@ with gr.Blocks(title="Поиск по документам", css=APP_CSS) as dem
     clear.click(on_clear, None, [chat, msg])
 
     # Hint buttons: prefill message only (no auto-send)
-    hint1.click(lambda: "Как оформить документ «Оприходование излишков товаров»?", None, msg)
+    hint1.click(lambda: "Как создать документ «Оприходование излишков товаров»?", None, msg)
     hint2.click(lambda: "Как рассчитать коэффициент вскрыши по плановым данным?", None, msg)
     hint3.click(lambda: "Как загрузить проводки из Excel в документ «Операция»?", None, msg)
 
