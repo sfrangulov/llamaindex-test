@@ -156,6 +156,7 @@ class RagWorkflow(Workflow):
             resp = await Settings.llm.acomplete(prompt)
             logging.debug(
                 "RAG query transform | input=%s | output=%s", ev.query, resp)
+            print(f"RAG query reformulated | input={ev.query} | output={resp}")
             candidate = (getattr(resp, "text", None) or "").strip()
             if candidate:
                 # remove surrounding quotes if any
