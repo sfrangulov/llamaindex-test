@@ -33,6 +33,30 @@ logging.basicConfig(
 
 # ---------------------------- Configuration ----------------------------
 
+reformulate_template = (
+    "Ты переписываешь пользовательский запрос для RAG-поиска.\n"
+    "Цель — оставить только суть, чтобы улучшить векторный поиск.\n"
+    "Требования: \n"
+    "- Отвечай только на том же языке что и запрос.\n"
+    "- Оставляй в ответе слова на том же языке что они написаны.\n"
+    "- Сохраняй ключевые сущности, термины, даты, аббревиатуры, единицы.\n"
+    "- Убери вводные слова, вежливость, местоимения и лишние подробности.\n"
+    "- Нормализуй формулировку (кратко, без воды), до ~3–15 слов.\n"
+    "- Если запрос уже короткий — оставь как есть.\n"
+    "- Ответ — только переписанный запрос, без пояснений и кавычек.\n\n"
+    "Запрос:\n{query}\n\n"
+)
+
+query_template = (
+    "Инструкции:\n"
+    "- Отвечай только на том же языке что и запрос.\n"
+    "- Отвечай по делу и только по предоставленному контексту.\n"
+    "- Если информации недостаточно — скажи об этом явно.\n"
+    "- Приводи короткие цитаты в кавычках при необходимости.\n\n"
+    "Контекст:\n{context_str}\n\n"
+    "Вопрос пользователя:\n{query_str}\n\n"
+)
+
 # Tunables
 TOP_K = int(os.getenv("TOP_K", 10))
 RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
@@ -80,7 +104,7 @@ class QueryEvent(Event):
     query: str
 
 
-class TransformedRagQueryEvent(Event):
+class ReformulatedRagQueryEvent(Event):
     rag_query: str
     query: str
 
@@ -121,26 +145,14 @@ class RagWorkflow(Workflow):
         return QueryEvent(query=query)
 
     @step
-    async def transformRagQuery(self, ctx: Context, ev: QueryEvent) -> TransformedRagQueryEvent | StopEvent:
+    async def reformulateRagQuery(self, ctx: Context, ev: QueryEvent) -> ReformulatedRagQueryEvent | StopEvent:
         """Transform the query for RAG using LLM to keep only the essence."""
         rag_query = ev.query
         try:
-            template_str = (
-                "Ты переписываешь пользовательский запрос для RAG-поиска.\n"
-                "Цель — оставить только суть, чтобы улучшить векторный поиск.\n"
-                "Требования: \n"
-                "- Отвечай только на том же языке что и запрос.\n"
-                "- Оставляй в ответе слова на том же языке что они написаны.\n"
-                "- Сохраняй ключевые сущности, термины, даты, аббревиатуры, единицы.\n"
-                "- Убери вводные слова, вежливость, местоимения и лишние подробности.\n"
-                "- Нормализуй формулировку (кратко, без воды), до ~3–15 слов.\n"
-                "- Если запрос уже короткий — оставь как есть.\n"
-                "- Ответ — только переписанный запрос, без пояснений и кавычек.\n\n"
-                "Запрос:\n{query}\n\n"
-            )
-            prompt = PromptTemplate(template_str).format(query=ev.query)
+            prompt = PromptTemplate(reformulate_template).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
-            logging.debug("RAG query transform | input=%s | output=%s", ev.query, resp)
+            logging.debug(
+                "RAG query transform | input=%s | output=%s", ev.query, resp)
             candidate = (getattr(resp, "text", None) or "").strip()
             if candidate:
                 # remove surrounding quotes if any
@@ -149,10 +161,10 @@ class RagWorkflow(Workflow):
                 rag_query = candidate or ev.query
         except Exception as e:
             logging.warning("Query transform failed, using original: %s", e)
-        return TransformedRagQueryEvent(query=ev.query, rag_query=rag_query)
+        return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query)
 
     @step
-    async def retrieve(self, ctx: Context, ev: TransformedRagQueryEvent) -> RetrievedEvent:
+    async def retrieve(self, ctx: Context, ev: ReformulatedRagQueryEvent) -> RetrievedEvent:
         """Retrieve candidate nodes using vector search with optional filters."""
         idx = get_index()
         retriever = idx.as_retriever(similarity_top_k=TOP_K)
@@ -162,16 +174,7 @@ class RagWorkflow(Workflow):
     @step
     async def synthesize(self, ctx: Context, ev: RetrievedEvent) -> SynthEvent:
         """Generate final answer from nodes using a response synthesizer."""
-        template_str = (
-            "Инструкции:\n"
-            "- Отвечай только на том же языке что и запрос.\n"
-            "- Отвечай по делу и только по предоставленному контексту.\n"
-            "- Если информации недостаточно — скажи об этом явно.\n"
-            "- Приводи короткие цитаты в кавычках при необходимости.\n\n"
-            "Контекст:\n{context_str}\n\n"
-            "Вопрос пользователя:\n{query_str}\n\n"
-        )
-        text_qa_template = PromptTemplate(template_str)
+        text_qa_template = PromptTemplate(query_template)
         synthesizer = get_response_synthesizer(
             llm=Settings.llm,
             response_mode=RESPONSE_MODE,
