@@ -254,19 +254,6 @@ async def search_documents(
     return json.dumps(payload, ensure_ascii=False)
 
 
-# ------------------------- Public helpers (compat) -------------------------
-
-
-def public_make_filters(
-    *, file_name: Optional[str]
-) -> List[ExactMatchFilter]:
-    return _make_filters(file_name=file_name)
-
-
-def public_build_node_postprocessors() -> List[BaseNodePostprocessor]:
-    return _build_node_postprocessors()
-
-
 # ----------------------------- Warmup helpers -----------------------------
 def warmup(
     *, ensure_index: bool = True
