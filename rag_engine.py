@@ -145,7 +145,7 @@ def get_index() -> VectorStoreIndex:
         _index = VectorStoreIndex.from_vector_store(_get_vector_store(), storage_context=sc)
     return _index
 
-def build_retriever(filters: Optional[MetadataFilters] = None) -> BaseRetriever:
+def _build_retriever(filters: Optional[MetadataFilters] = None) -> BaseRetriever:
     idx = get_index()
     dense = idx.as_retriever(similarity_top_k=TOP_K, filters=filters)
     return dense
@@ -190,7 +190,7 @@ def _build_sources(response) -> List[Dict[str, Any]]:
     return sources
 
 
-def _synthesizer():
+def __build_synthesizer():
     # If a system prompt is provided, build a custom QA template that embeds it.
     text_qa_template = None
     template_str = (
@@ -221,9 +221,9 @@ async def search_documents(
 
     filters = _make_filters(file_name=file_name)
     metadata_filters = MetadataFilters(filters=filters) if filters else None
-    retriever = build_retriever(metadata_filters)
+    retriever = _build_retriever(metadata_filters)
     postprocessors = _build_node_postprocessors()
-    synth = _synthesizer()
+    synth = __build_synthesizer()
 
     t0 = time.time()
 
