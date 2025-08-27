@@ -206,3 +206,5 @@ __marimo__/
 chroma_db/
 data/
 storage/
+attachments/
+db/

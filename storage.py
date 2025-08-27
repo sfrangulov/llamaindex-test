@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fsspec import AbstractFileSystem
+import hashlib
+import time
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -21,26 +23,71 @@ log = structlog.get_logger(__name__)
 # LlamaIndex core
 
 
-DATA_PATH = os.getenv("DATA_PATH", "./data")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
+DATA_PATH = os.getenv("DATA_PATH", "./attachments")
+CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma_db")
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "knowledge_base")
-PERSIST_DIR = os.getenv("PERSIST_DIR", "./storage")
+PERSIST_DIR = os.getenv("PERSIST_DIR", "./data/storage")
 
 
 md = MarkItDown(enable_plugins=False)
 
 
 class MarkItDownReader(BaseReader):
-    def lazy_load_data(self,
-                       file: Path,
-                       extra_info: Optional[Dict] = None,
-                       fs: Optional[AbstractFileSystem] = None) -> List[Document]:
+    def load_data(
+        self,
+        file: Path,
+        extra_info: Optional[Dict] = None,
+        fs: Optional[AbstractFileSystem] = None,
+    ) -> List[Document]:
+        """Convert a single file to a Document with rich metadata.
+
+        Note: Do not delete or move the source file here; ingestion should be
+        idempotent and non-destructive.
+        """
+        # Compute file stats and a deterministic content hash for idempotency
+        try:
+            st = os.stat(file)
+            with open(file, "rb") as f:
+                blob = f.read()
+            sha256 = hashlib.sha256(blob).hexdigest()
+        except Exception:
+            # If stats/hash failed, still try to convert and proceed without hash
+            st = None
+            sha256 = None
+
         result = md.convert(file)
-        metadata = {"file_name": file.name}
+
+        metadata: Dict[str, Any] = {
+            "file_name": file.name,
+            "file_path": str(file),
+        }
+        if st is not None:
+            metadata.update(
+                {
+                    "file_size": getattr(st, "st_size", None),
+                    "file_mtime": getattr(st, "st_mtime", None),
+                    "file_mtime_iso": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(
+                            getattr(st, "st_mtime", 0))
+                    ),
+                }
+            )
+        if sha256 is not None:
+            metadata["sha256"] = sha256
         if extra_info is not None:
             metadata.update(extra_info)
-        log.debug("MarkItDownReader", file=result.text_content[:50], metadata=metadata)
-        return [Document(text=result.text_content, metadata=metadata or {})]
+
+        # Avoid logging document contents; log path and hash instead
+        log.debug(
+            "MarkItDownReader",
+            file_path=str(file),
+            sha256=sha256,
+            size=getattr(st, "st_size", None),
+        )
+
+        # Use deterministic id_ when available for deduplication
+        doc_id = sha256 if sha256 is not None else None
+        return [Document(text=result.text_content, metadata=metadata or {}, id_=doc_id)]
 
 
 # ---------------------------- Storage / Index ----------------------------
