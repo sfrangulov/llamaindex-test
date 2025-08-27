@@ -1,6 +1,8 @@
 import os
-import logging
 from typing import Any, List, Optional
+
+import structlog
+log = structlog.get_logger(__name__)
 
 # LlamaIndex core
 from llama_index.core import (
@@ -55,7 +57,7 @@ def _get_storage_context(load_persisted: bool = True) -> StorageContext:
         else:
             raise RuntimeError("force rebuild")
     except Exception:
-        logging.warning(
+        log.warning(
             "StorageContext: no persisted state, creating fresh one")
         _storage_context = StorageContext.from_defaults(
             vector_store=_get_vector_store())

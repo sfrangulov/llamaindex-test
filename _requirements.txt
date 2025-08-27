@@ -8,4 +8,4 @@ chromadb                  # PersistentClient for vector DB
 python-dotenv             # load_dotenv for env config
 gradio
 openpyxl
-colorlog
+structlog

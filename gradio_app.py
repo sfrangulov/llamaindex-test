@@ -3,11 +3,8 @@ import re
 import json
 from typing import List, Tuple
 
-from logging_config import setup_logging
-setup_logging()
-
-import logging
-logger = logging.getLogger(__name__)
+import structlog
+log = structlog.get_logger(__name__)
 
 from dotenv import load_dotenv
 
@@ -73,7 +70,7 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
             cites.append((title, snippet))
         return answer, cites
     except Exception as e:
-        logger.exception("search_documents failed: %s", e)
+        log.exception("search_documents failed: %s", e)
         return f"Ошибка: {e}", []
 
 

@@ -3,8 +3,8 @@ import time
 import json
 from typing import Any, Dict, List
 
-import logging
-logger = logging.getLogger(__name__)
+import structlog
+log = structlog.get_logger(__name__)
 
 from storage import get_index
 from llama_index.llms.google_genai import GoogleGenAI
@@ -166,7 +166,7 @@ class RagWorkflow(Workflow):
             prompt = PromptTemplate(
                 reformulate_template).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
-            logger.debug(
+            log.debug(
                 "RAG query transform | input=%s | output=%s", ev.query, resp)
             print(f"RAG query reformulated | input={ev.query} | output={resp}")
             candidate = (getattr(resp, "text", None) or "").strip()
@@ -176,7 +176,7 @@ class RagWorkflow(Workflow):
                     candidate = candidate[1:-1].strip()
                 rag_query = candidate or ev.query
         except Exception as e:
-            logger.warning("Query transform failed, using original: %s", e)
+            log.warning("Query transform failed, using original: %s", e)
         return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query)
 
     @step
@@ -229,11 +229,11 @@ async def search_documents(
     try:
         result: Dict[str, Any] = await wf.run(input={"query": query})
     except Exception as e:
-        logger.exception("Workflow failed, returning empty result: %s", e)
+        log.exception("Workflow failed, returning empty result: %s", e)
         result = {"answer": "", "sources": []}
 
     latency = time.time() - t0
-    logger.debug("Workflow done | %ds | sources=%d", int(
+    log.debug("Workflow done | %ds | sources=%d", int(
         latency), len(result.get("sources", []) or []))
     return json.dumps(result, ensure_ascii=False)
 
@@ -248,5 +248,5 @@ def warmup(
         try:
             _ = get_index()
         except Exception as e:
-            logger.warning("Warmup get_index failed: %s", e)
-    logger.debug("Warmup done (index=%s)", ensure_index)
+            log.warning("Warmup get_index failed: %s", e)
+    log.debug("Warmup done (index=%s)", ensure_index)
