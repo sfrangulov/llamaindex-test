@@ -1,11 +1,14 @@
 import os
 import time
 import json
-import logging
 from typing import Any, Dict, List
+
+import logging
+logger = logging.getLogger(__name__)
 
 from storage import get_index
 from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.llms.ollama import Ollama
 from google.genai.types import EmbedContentConfig
 from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
 from llama_index.core.workflow import (
@@ -25,12 +28,6 @@ from llama_index.core.postprocessor.llm_rerank import LLMRerank
 
 from dotenv import load_dotenv
 load_dotenv()
-
-
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
 
 
 # ---------------------------- Configuration ----------------------------
@@ -61,10 +58,15 @@ query_template = (
 
 # Tunables
 TOP_K = int(os.getenv("TOP_K", 10))
-RESPONSE_MODE = os.getenv("RESPONSE_MODE", "compact")
-
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 
 def configure_settings() -> None:
+    """Init global Settings once (embedder, LLM, parser, transformations)."""
+    #configure_settings_gemini()
+    configure_settings_ollama()
+    Settings.transformations = [MarkdownNodeParser()]
+
+def configure_settings_gemini() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     Settings.embed_model = GoogleGenAIEmbedding(
         model_name="gemini-embedding-001",          # новое имя модели
@@ -75,8 +77,18 @@ def configure_settings() -> None:
         )
     )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
-    Settings.transformations = [MarkdownNodeParser()]
 
+def configure_settings_ollama() -> None:
+    """Init global Settings once (embedder, LLM, parser, transformations)."""
+    Settings.embed_model = GoogleGenAIEmbedding(
+        model_name="gemini-embedding-001",          # новое имя модели
+        embed_batch_size=100,
+        embedding_config=EmbedContentConfig(
+            output_dimensionality=768,
+            task_type="RETRIEVAL_DOCUMENT"
+        )
+    )
+    Settings.llm = Ollama(model="qwen3:4b", temperature=0.1) # thinking=False, 
 
 def _build_sources(response) -> List[Dict[str, Any]]:
     """Build a list of source documents from the response."""
@@ -154,7 +166,7 @@ class RagWorkflow(Workflow):
             prompt = PromptTemplate(
                 reformulate_template).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
-            logging.debug(
+            logger.debug(
                 "RAG query transform | input=%s | output=%s", ev.query, resp)
             print(f"RAG query reformulated | input={ev.query} | output={resp}")
             candidate = (getattr(resp, "text", None) or "").strip()
@@ -164,7 +176,7 @@ class RagWorkflow(Workflow):
                     candidate = candidate[1:-1].strip()
                 rag_query = candidate or ev.query
         except Exception as e:
-            logging.warning("Query transform failed, using original: %s", e)
+            logger.warning("Query transform failed, using original: %s", e)
         return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query)
 
     @step
@@ -178,6 +190,8 @@ class RagWorkflow(Workflow):
     @step
     async def rerank(self, ctx: Context, ev: RetrievedEvent) -> RerankEvent:
         """Rerank the nodes."""
+        if not RERANK_ENABLED or not ev.nodes:
+            return RerankEvent(nodes=ev.nodes, query=ev.query)
         ranker = LLMRerank()
         new_nodes = ranker.postprocess_nodes(ev.nodes, query_str=ev.query)
         return RerankEvent(nodes=new_nodes, query=ev.query)
@@ -188,7 +202,7 @@ class RagWorkflow(Workflow):
         text_qa_template = PromptTemplate(query_template)
         synthesizer = get_response_synthesizer(
             llm=Settings.llm,
-            response_mode=RESPONSE_MODE,
+            response_mode="compact",
             use_async=True,
             text_qa_template=text_qa_template,
         )
@@ -215,11 +229,11 @@ async def search_documents(
     try:
         result: Dict[str, Any] = await wf.run(input={"query": query})
     except Exception as e:
-        logging.exception("Workflow failed, returning empty result: %s", e)
+        logger.exception("Workflow failed, returning empty result: %s", e)
         result = {"answer": "", "sources": []}
 
     latency = time.time() - t0
-    logging.debug("Workflow done | %ds | sources=%d", int(
+    logger.debug("Workflow done | %ds | sources=%d", int(
         latency), len(result.get("sources", []) or []))
     return json.dumps(result, ensure_ascii=False)
 
@@ -234,5 +248,5 @@ def warmup(
         try:
             _ = get_index()
         except Exception as e:
-            logging.warning("Warmup get_index failed: %s", e)
-    logging.debug("Warmup done (index=%s)", ensure_index)
+            logger.warning("Warmup get_index failed: %s", e)
+    logger.debug("Warmup done (index=%s)", ensure_index)

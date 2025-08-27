@@ -1,8 +1,13 @@
 import os
 import re
 import json
-import logging
 from typing import List, Tuple
+
+from logging_config import setup_logging
+setup_logging()
+
+import logging
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
@@ -68,7 +73,7 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
             cites.append((title, snippet))
         return answer, cites
     except Exception as e:
-        logging.exception("search_documents failed: %s", e)
+        logger.exception("search_documents failed: %s", e)
         return f"Ошибка: {e}", []
 
 
@@ -114,7 +119,7 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 with gr.Blocks(title="Поиск по документам", css=APP_CSS) as demo:
     with gr.Row():
         with gr.Column(scale=3):
-            chat = gr.Chatbot(height=1000, show_copy_button=True, type="messages")
+            chat = gr.Chatbot(height=450, show_copy_button=True, type="messages")
             msg = gr.Textbox(placeholder="Задайте вопрос по документации…", show_label=False, lines=2)
             with gr.Row():
                 send = gr.Button("Отправить", variant="primary")
