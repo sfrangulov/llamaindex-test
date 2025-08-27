@@ -27,6 +27,7 @@ DATA_PATH = os.getenv("DATA_PATH", "./attachments")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma_db")
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "knowledge_base")
 PERSIST_DIR = os.getenv("PERSIST_DIR", "./data/storage")
+MD_DIR = os.getenv("MD_DIR", "./data/markdown")
 
 
 md = MarkItDown(enable_plugins=False)
@@ -87,6 +88,9 @@ class MarkItDownReader(BaseReader):
 
         # Use deterministic id_ when available for deduplication
         doc_id = sha256 if sha256 is not None else None
+        os.makedirs(MD_DIR, exist_ok=True)
+        with open(os.path.join(MD_DIR, f"{file.name}.md"), "w", encoding="utf-8") as f:
+            f.write(result.text_content)
         return [Document(text=result.text_content, metadata=metadata or {}, id_=doc_id)]
 
 
@@ -137,9 +141,10 @@ def _load_documents_with_metadata() -> List[Any]:
     reader = SimpleDirectoryReader(
         input_dir=DATA_PATH,
         recursive=True,
-        required_exts=[".docx"],
+        required_exts=[".docx"], #, ".xlsx"
         file_extractor={
             ".docx": MarkItDownReader(),
+            ".xlsx": MarkItDownReader(),
         }
     )
     documents = reader.load_data(show_progress=True)

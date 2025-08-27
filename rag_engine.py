@@ -72,7 +72,9 @@ def configure_settings_gemini() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     Settings.embed_model = GoogleGenAIEmbedding(
         model_name="gemini-embedding-001",          # новое имя модели
-        embed_batch_size=100,
+        embed_batch_size=80,
+        retry_min_seconds=60,
+        retry_max_seconds=120,
         embedding_config=EmbedContentConfig(
             output_dimensionality=768,
             task_type="RETRIEVAL_DOCUMENT"
