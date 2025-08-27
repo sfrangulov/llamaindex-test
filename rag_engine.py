@@ -1,16 +1,10 @@
-import os
-import time
-import json
-from typing import Any, Dict, List
-
-import structlog
-log = structlog.get_logger(__name__)
-
-from storage import get_index
-from llama_index.llms.google_genai import GoogleGenAI
-from llama_index.llms.ollama import Ollama
-from google.genai.types import EmbedContentConfig
-from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from dotenv import load_dotenv
+from llama_index.core.postprocessor.llm_rerank import LLMRerank
+from llama_index.core import Settings
+from llama_index.core.schema import MetadataMode
+from llama_index.core.response_synthesizers import get_response_synthesizer
+from llama_index.core.node_parser import MarkdownNodeParser
+from llama_index.core.prompts import PromptTemplate
 from llama_index.core.workflow import (
     Workflow,
     Event,
@@ -19,14 +13,20 @@ from llama_index.core.workflow import (
     StartEvent,
     StopEvent,
 )
-from llama_index.core.prompts import PromptTemplate
-from llama_index.core.node_parser import MarkdownNodeParser
-from llama_index.core.response_synthesizers import get_response_synthesizer
-from llama_index.core.schema import MetadataMode
-from llama_index.core import Settings
-from llama_index.core.postprocessor.llm_rerank import LLMRerank
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from google.genai.types import EmbedContentConfig
+from llama_index.llms.ollama import Ollama
+from llama_index.llms.google_genai import GoogleGenAI
+from storage import get_index
+import os
+import time
+import json
+from typing import Any, Dict, List
 
-from dotenv import load_dotenv
+import structlog
+log = structlog.get_logger(__name__)
+
+
 load_dotenv()
 
 
@@ -60,11 +60,13 @@ query_template = (
 TOP_K = int(os.getenv("TOP_K", 10))
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 
+
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
-    #configure_settings_gemini()
-    configure_settings_ollama()
+    configure_settings_gemini()
+    # configure_settings_ollama()
     Settings.transformations = [MarkdownNodeParser()]
+
 
 def configure_settings_gemini() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
@@ -78,6 +80,7 @@ def configure_settings_gemini() -> None:
     )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
 
+
 def configure_settings_ollama() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     Settings.embed_model = GoogleGenAIEmbedding(
@@ -88,7 +91,9 @@ def configure_settings_ollama() -> None:
             task_type="RETRIEVAL_DOCUMENT"
         )
     )
-    Settings.llm = Ollama(model="qwen3:4b", temperature=0.1) # thinking=False, 
+    Settings.llm = Ollama(model="qwen3:0.6b", temperature=0.1,
+                          request_timeout=120.0, thinking=False)  # thinking=False,
+
 
 def _build_sources(response) -> List[Dict[str, Any]]:
     """Build a list of source documents from the response."""
@@ -142,7 +147,7 @@ class SynthEvent(Event):
 class RagWorkflow(Workflow):
     """RAG pipeline implemented via llama_index.core.workflow."""
 
-    def __init__(self, timeout: int = 120) -> None:
+    def __init__(self, timeout: int = 600) -> None:
         super().__init__(timeout=timeout)
 
     @step
@@ -167,8 +172,7 @@ class RagWorkflow(Workflow):
                 reformulate_template).format(query=ev.query)
             resp = await Settings.llm.acomplete(prompt)
             log.debug(
-                "RAG query transform | input=%s | output=%s", ev.query, resp)
-            print(f"RAG query reformulated | input={ev.query} | output={resp}")
+                "RAG query reformulation done.", query=ev.query, rag_query=resp.text)
             candidate = (getattr(resp, "text", None) or "").strip()
             if candidate:
                 # remove surrounding quotes if any
@@ -176,7 +180,7 @@ class RagWorkflow(Workflow):
                     candidate = candidate[1:-1].strip()
                 rag_query = candidate or ev.query
         except Exception as e:
-            log.warning("Query transform failed, using original: %s", e)
+            log.warning("Query transform failed, using original", error=e)
         return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query)
 
     @step
@@ -185,15 +189,19 @@ class RagWorkflow(Workflow):
         idx = get_index()
         retriever = idx.as_retriever(similarity_top_k=TOP_K)
         nodes = await retriever.aretrieve(ev.rag_query)
+        log.debug("Retrieval done.", query=ev.rag_query, node_count=len(nodes))
         return RetrievedEvent(query=ev.query, nodes=nodes)
 
     @step
     async def rerank(self, ctx: Context, ev: RetrievedEvent) -> RerankEvent:
         """Rerank the nodes."""
         if not RERANK_ENABLED or not ev.nodes:
+            log.debug("Reranking skipped.")
             return RerankEvent(nodes=ev.nodes, query=ev.query)
         ranker = LLMRerank()
         new_nodes = ranker.postprocess_nodes(ev.nodes, query_str=ev.query)
+        log.debug("Reranking done.", query=ev.query, input_count=len(
+            ev.nodes), output_count=len(new_nodes))
         return RerankEvent(nodes=new_nodes, query=ev.query)
 
     @step
@@ -232,9 +240,9 @@ async def search_documents(
         log.exception("Workflow failed, returning empty result: %s", e)
         result = {"answer": "", "sources": []}
 
-    latency = time.time() - t0
-    log.debug("Workflow done | %ds | sources=%d", int(
-        latency), len(result.get("sources", []) or []))
+    latency = int(time.time() - t0)
+    log.debug("Workflow done.", query=query, latency=latency, answer=result.get("answer", "")[:50],
+              sources=len(result.get("sources", "")))
     return json.dumps(result, ensure_ascii=False)
 
 
