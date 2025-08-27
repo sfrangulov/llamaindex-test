@@ -9,3 +9,4 @@ python-dotenv             # load_dotenv for env config
 gradio
 openpyxl
 structlog
+markitdown[all]
