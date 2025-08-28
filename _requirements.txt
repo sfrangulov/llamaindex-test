@@ -3,8 +3,8 @@ llama-index-vector-stores-chroma  # ChromaVectorStore integration
 llama-index-llms-google-genai     # GoogleGenAI LLM driver
 llama-index-embeddings-google-genai  # GoogleGenAIEmbedding for text-embedding-004
 llama-index-readers-file
-llama_index.llms.ollama
 llama-index-embeddings-huggingface
+llama-index-llms-huggingface
 chromadb                  # PersistentClient for vector DB
 python-dotenv             # load_dotenv for env config
 gradio

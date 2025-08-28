@@ -16,13 +16,14 @@ from llama_index.core.workflow import (
 from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from google.genai.types import EmbedContentConfig
-from llama_index.llms.ollama import Ollama
+from llama_index.llms.huggingface import HuggingFaceLLM
 from llama_index.llms.google_genai import GoogleGenAI
 from storage import get_index
 import os
 import time
 import json
 from typing import Any, Dict, List
+from llama_index.core.postprocessor import SentenceTransformerRerank
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -65,8 +66,8 @@ RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     configure_settings_gemini()
-    # configure_settings_ollama()
-    Settings.transformations = [MarkdownNodeParser()]
+    # configure_settings_local()
+    Settings.node_parser = MarkdownNodeParser()
 
 
 def configure_settings_gemini() -> None:
@@ -78,19 +79,25 @@ def configure_settings_gemini() -> None:
         retry_max_seconds=120,
         embedding_config=EmbedContentConfig(
             output_dimensionality=768,
-            task_type="RETRIEVAL_DOCUMENT"
+            task_type="RETRIEVAL_DOCUMENT",
         )
     )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
+    Settings.ranker = LLMRerank()
 
 
-def configure_settings_ollama() -> None:
+def configure_settings_local() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     Settings.embed_model = HuggingFaceEmbedding(
-        model_name="BAAI/bge-small-en-v1.5"
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        max_length=768,
+        show_progress_bar=True
     )
-    Settings.llm = Ollama(model="qwen3:0.6b", temperature=0.1,
-                          request_timeout=120.0, thinking=False)
+    Settings.ranker = SentenceTransformerRerank(
+        model="DiTy/cross-encoder-russian-msmarco", top_n=max(10, TOP_K)
+    )  # "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    # Settings.llm = HuggingFaceLLM()
+    Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
 
 
 def _build_sources(response) -> List[Dict[str, Any]]:
@@ -193,11 +200,11 @@ class RagWorkflow(Workflow):
     @step
     async def rerank(self, ctx: Context, ev: RetrievedEvent) -> RerankEvent:
         """Rerank the nodes."""
-        if not RERANK_ENABLED or not ev.nodes:
+        if not RERANK_ENABLED or not ev.nodes or not Settings.ranker:
             log.debug("Reranking skipped.")
             return RerankEvent(nodes=ev.nodes, query=ev.query)
-        ranker = LLMRerank()
-        new_nodes = ranker.postprocess_nodes(ev.nodes, query_str=ev.query)
+        new_nodes = Settings.ranker.postprocess_nodes(
+            ev.nodes, query_str=ev.query)
         log.debug("Reranking done.", query=ev.query, input_count=len(
             ev.nodes), output_count=len(new_nodes))
         return RerankEvent(nodes=new_nodes, query=ev.query)
