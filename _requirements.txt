@@ -11,4 +11,6 @@ gradio
 openpyxl
 structlog
 markitdown[all]
-gradio_modal
+gradio_modal #del
+dash
+dash_bootstrap_components
