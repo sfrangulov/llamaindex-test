@@ -1,70 +1,41 @@
-# AI agent working guide for this repo
+# AI agent guide for this repo
 
-This project is a small local RAG app using LlamaIndex + ChromaDB with two UIs:
-- `kb_ui.py` — Q&A over indexed docs (chat style)
-- `docs_ui.py` — document manager (list/upload/index/delete/preview)
+Local RAG app using LlamaIndex + ChromaDB with two UIs:
+- `kb_ui.py` — chat Q&A over the index (Gradio, port 7860)
+- `docs_ui.py` — document manager (Dash, port 7861)
 
-Storage and indexing live in `storage.py`; retrieval and synthesis are in `rag_engine.py`. Prefer reusing these modules instead of duplicating logic.
+Big picture
+- Ingestion: `.docx` in `attachments/` → `md_reader.MarkItDownReader` → `Document(text, metadata)`; markdown copies saved to `data/markdown/<file_name>.docx.md`.
+- Index: `storage.get_index()` attaches to/create Chroma collection (persistent; telemetry off). On first run, it loads DOCX, writes markdown, and builds a `VectorStoreIndex` over Chroma.
+- Retrieval: `rag_engine.RagWorkflow` steps: reformulate → retrieve (top-k) → optional rerank → synthesize → `{answer, sources[]}`.
+- UIs: both call `warmup(ensure_index=True)` to pre-init Settings and index.
 
-## Architecture in one glance
-- Ingestion
-  - Source files: `attachments/` (DOCX). Markdown copies saved to `data/markdown/`.
-  - `md_reader.MarkItDownReader` converts `.docx` to markdown text with rich metadata (file_name, size, mtime, sha256).
-  - `storage.get_index()` initializes a persistent Chroma collection (path via `CHROMA_PATH`, collection via `CHROMA_COLLECTION`). On first run it loads `.docx` from `attachments/`, writes `.md` files, and builds a `VectorStoreIndex`.
-  - `storage.add_docx_to_store(path)` converts and inserts a single file, saves `.md`, and upserts into the current index; it also optionally persists the original file in `attachments/`.
-- Retrieval
-  - `rag_engine.configure_settings_*()` configures `Settings.embed_model`, `Settings.llm`, `Settings.ranker`, and `Settings.node_parser`. Default is local HF models; Gemini variants exist but require `GOOGLE_API_KEY`.
-  - `RagWorkflow` orchestrates: reformulate query → retrieve (top-k from index) → optional rerank → synthesize. Returns JSON with `answer` and `sources`.
-- UIs
-  - `kb_ui.py` launches chat Q&A (port 7860). Uses `warmup()` to pre-init settings/index.
-  - `docs_ui.py` launches document manager (port 7861). Tabs: list (with search/sort), upload+index, delete from vector store (by file_name), preview Markdown.
+Key configs (env or defaults)
+- Storage (see `storage.Config`): `DATA_PATH=./attachments`, `CHROMA_PATH=./data/chroma_db`, `CHROMA_COLLECTION=knowledge_base`, `MD_DIR=./data/markdown`.
+- RAG tuning (see `rag_engine.py`): `TOP_K` (default 10), `RERANK_ENABLED=true`, `GOOGLE_API_KEY` (required for Gemini), `HOST`, `PORT` (UI bind).
+- Models: default `configure_settings_gemini()` uses Google embedding + `gemini-2.5-flash`; `configure_settings_local()` switches to HF embeddings + sentence-transformer reranker.
 
-## Conventions and important details
-- Paths and config
-  - Controlled via env or defaults in `storage.Config`: `DATA_PATH=./attachments`, `CHROMA_PATH=./data/chroma_db`, `CHROMA_COLLECTION=knowledge_base`, `MD_DIR=./data/markdown`.
-  - Helper `ensure_dirs()` must be called before file ops.
-- Vector store metadata
-  - Each node carries `metadata["file_name"]` and others from the reader. Deletions target `file_name` via Chroma `where` filters.
-  - `list_vector_file_names()` enumerates distinct `file_name` values from Chroma metadatas.
-- Markdown persistence
-  - Markdown is always saved as `data/markdown/<file_name>.md` where `<file_name>` includes the `.docx` suffix.
-- Idempotency
-  - `add_docx_to_store()` deletes existing vectors with the same `file_name` before insert to avoid duplicates.
+Core helpers to reuse (do not duplicate logic)
+- `storage.get_index()` — singleton index over Chroma; don’t rebuild per request.
+- `storage.add_docx_to_store(path)` — converts DOCX, saves markdown, deletes old vectors by `file_name`, then inserts.
+- `storage.list_storage_files(search)` — filesystem listing of DOCX under `attachments/`.
+- `storage.list_vector_file_names()` — distinct `file_name` values present in Chroma.
+- `storage.delete_from_vector_store_by_file_names([...])` — delete embeddings by `metadata.file_name` (Chroma `where`).
+- `storage.read_markdown(file_name)` — load saved markdown for preview.
 
-## Developer workflows (do this first)
-- Python 3.13 on macOS; create a venv and install deps from `requirements.txt`.
-- Local run
-  - Docs UI: `python docs_ui.py` (http://localhost:7861)
-  - Chat UI: `python kb_ui.py` (http://localhost:7860)
-- Retrieval engine
-  - Uses local HF defaults. For Gemini, set `GOOGLE_API_KEY` and switch to `configure_settings_gemini()` in `rag_engine.configure_settings()`.
-- Data seeding
-  - Put `.docx` files into `attachments/` and start either UI; first run will index and generate markdown.
+Important conventions and gotchas
+- Metadata from `MarkItDownReader`: `file_name`, `file_path`, `file_size`, `file_mtime_iso`, optional `sha256`; `Document.id_` is `sha256` when available.
+- Idempotency: before insert, vectors with the same `file_name` are removed to avoid duplicates.
+- Never delete originals from `attachments/` via vector deletions; deletions are metadata-filtered in Chroma only.
+- Always call `ensure_dirs()` before file ops; `get_index()` does this internally.
 
-## Coding patterns to follow
-- Reuse the public helpers in `storage.py` for:
-  - Listing files: `list_storage_files(search)`
-  - Adding files: `add_docx_to_store(path)`
-  - Listing vector entries: `list_vector_file_names()`
-  - Deleting vectors: `delete_from_vector_store_by_file_names([...])`
-  - Reading Markdown: `read_markdown(file_name)`
-- Always call `warmup(ensure_index=True)` before serving requests to avoid first‑hit latency.
-- For new Gradio components, be mindful of v5 API (e.g., Dataframe lacks a `height` arg).
+Dev workflow
+- Python 3.13. Install with `pip install -r requirements.txt`. Start UIs: `python kb_ui.py` (7860), `python docs_ui.py` (7861). Seed by placing `.docx` in `attachments/`.
+- Programmatic RAG: `await RagWorkflow().run(input={"query": "..."})` or `await search_documents("...")` → JSON string with `answer` and `sources`.
 
-## External dependencies and versions
-- LlamaIndex components: core, workflows, vector-stores-chroma, readers-file
-- ChromaDB: persistent client; telemetry disabled via `ChromaSettings(anonymized_telemetry=False)`
-- markitdown: DOCX → Markdown conversion
-- Gradio v5 for UIs
+Guardrails for AI edits
+- Don’t add parallel ingestion paths—use `add_docx_to_store()` to keep markdown and vectors consistent.
+- Don’t change default paths/collection without updating both UIs and `storage.Config` consumers.
+- Prefer toggling models via `configure_settings_*()` rather than inlining new settings.
 
-## Examples from codebase
-- Index init: `storage.get_index()` will either build from `attachments/` or attach to existing vectors.
-- Delete by metadata: `collection.delete(where={"file_name": name})` (see `delete_from_vector_store_by_file_names`).
-- RAG call: `await RagWorkflow().run(input={"query": "..."})` → JSON answer with ranked sources.
-
-## Guardrails for agents
-- Do not create parallel ingestion flows; use `add_docx_to_store` to keep markdown and vectors consistent.
-- Do not delete source files; vector deletions should target only embeddings unless explicitly asked.
-- Avoid changing default paths unless coordinated; UIs and storage helpers assume the defaults.
-
-If anything is unclear (e.g., switching to Gemini everywhere, adding filters, or changing chunking), ask for confirmation before refactors.
+If any of the above is unclear (e.g., switching defaults to local models, adding filters/chunking changes), request confirmation before refactoring.
