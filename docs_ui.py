@@ -15,7 +15,6 @@ from storage import (
 from rag_engine import warmup
 from gradio_modal import Modal
 
-# CSS: limit the first column (Название) to 600px with ellipsis
 CSS = """
 #files_table table { table-layout: fixed; }
 #files_table table th:nth-child(1),
