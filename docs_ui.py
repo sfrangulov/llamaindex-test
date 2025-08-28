@@ -145,6 +145,9 @@ with gr.Blocks(title="Документы (хранилище и индекс)", 
             refresh_btn.click(
                 refresh_table, [search, sort_by, sort_dir], [table])
 
+            # Автозагрузка данных в таблицу при старте приложения
+            app.load(refresh_table, [search, sort_by, sort_dir], [table])
+
             # Preview modal using gradio_modal
             with Modal(visible=False) as preview_modal:
                 preview_md = gr.Markdown("Загрузка…")
