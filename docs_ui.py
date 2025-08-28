@@ -15,11 +15,6 @@ from storage import (
 from rag_engine import warmup
 from gradio_modal import Modal
 
-CSS = """
-#files_table table { table-layout: fixed; }
-#files_table table th:nth-child(1),
-#files_table table td:nth-child(1) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-"""
 
 DOCX_EXT = ".docx"
 
@@ -108,7 +103,7 @@ def _on_preview(file_name: str) -> str:
     return read_markdown(file_name)
 
 
-with gr.Blocks(title="Документы (хранилище и индекс)", css=CSS) as app:
+with gr.Blocks(title="Документы") as app:
     gr.Markdown(
         f"""
 		# Управление документами
@@ -132,48 +127,86 @@ with gr.Blocks(title="Документы (хранилище и индекс)", 
                     sort_dir = gr.Dropdown(
                         ["asc", "desc"], value="asc", label="Порядок")
             table = gr.Dataframe(
-                headers=["Название", "Размер", "Дата"], interactive=True, elem_id="files_table")
+                headers=["Название", "Размер", "Дата"],
+                column_widths=["70%", "10%", "20%"],
+                interactive=False,
+            )
             refresh_btn = gr.Button("Обновить")
 
-            def refresh_table(s, sb, sd):
-                return _load_table(s or "", sb or "name", sd or "asc")
+            # Управление действиями над выбранным файлом
+            with gr.Row():
+                selected_name = gr.Dropdown(choices=[], label="Выберите файл", allow_custom_value=False)
+                btn_preview = gr.Button("Предпросмотр")
+                btn_delete = gr.Button("Удалить")
 
-            search.input(refresh_table, [search, sort_by, sort_dir], [table])
-            sort_by.change(refresh_table, [search, sort_by, sort_dir], [table])
-            sort_dir.change(
-                refresh_table, [search, sort_by, sort_dir], [table])
-            refresh_btn.click(
-                refresh_table, [search, sort_by, sort_dir], [table])
+            def refresh_all(s, sb, sd):
+                tbl = _load_table(s or "", sb or "name", sd or "asc")
+                choices = [row[0] for row in tbl]
+                value = choices[0] if choices else None
+                return tbl, gr.update(choices=choices, value=value)
+
+            search.input(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
+            sort_by.change(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
+            sort_dir.change(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
+            refresh_btn.click(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
 
             # Автозагрузка данных в таблицу при старте приложения
-            app.load(refresh_table, [search, sort_by, sort_dir], [table])
+            app.load(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
 
             # Preview modal using gradio_modal
             with Modal(visible=False) as preview_modal:
                 preview_md = gr.Markdown("Загрузка…")
 
-            # Open modal when clicking on the first column (Название)
-            def on_cell_select(evt: gr.SelectData):
-                try:
-                    # evt.index expected as (row, col) in SelectData
-                    idx = getattr(evt, "index", None) or (None, None)
-                    row, col = idx[0], idx[1]
-                    if row is None or col is None:
-                        return gr.skip(), gr.skip()
-                    if int(col) != 0:
-                        return gr.skip(), gr.skip()
-                    # For first column, evt.value should be the file name
-                    file_name = getattr(evt, "value", None)
-                    if not isinstance(file_name, str) or not file_name:
-                        return gr.skip(), gr.skip()
-                    md = _on_preview(file_name)
-                    # Update content; modal opens via chained event
-                    return gr.update(value=md)
-                except Exception as e:
-                    return gr.update(value=f"Ошибка открытия: {e}")
+            # Confirm deletion modal
+            with Modal(visible=False) as confirm_modal:
+                confirm_text = gr.Markdown("Подтвердите удаление")
+                with gr.Row():
+                    confirm_yes = gr.Button("Да")
+                    confirm_no = gr.Button("Нет")
 
-        # On select: update content then open modal
-        table.select(on_cell_select, None, [preview_md]).then(lambda: Modal(visible=True), None, preview_modal)
+            # Helper state and status
+            pending_delete = gr.State("")
+            status_md = gr.Markdown("")
+
+            def _open_preview():
+                return Modal(visible=True)
+
+            def _open_confirm():
+                return Modal(visible=True)
+
+            def _close_confirm():
+                return Modal(visible=False)
+
+            def _confirm_delete(name: str):
+                if not name:
+                    return gr.update(value="Имя файла не задано"), Modal(visible=False), gr.update(value="")
+                count = delete_from_vector_store_by_file_names([name])
+                msg = f"Удалено из векторного хранилища: {name} (записей: {count})"
+                return gr.update(value=msg), Modal(visible=False), gr.update(value="")
+
+            # Buttons for actions
+            def _on_preview_click(name: str):
+                if not name:
+                    return gr.update(value="Выберите файл"), gr.skip()
+                return gr.update(value=_on_preview(name)), _open_preview()
+
+            def _on_delete_click(name: str):
+                if not name:
+                    return gr.update(value="Выберите файл"), gr.skip(), gr.update(value="")
+                return gr.update(value=f"Удалить из векторного хранилища: {name}?"), _open_confirm(), gr.update(value=name)
+
+            btn_preview.click(_on_preview_click, [selected_name], [preview_md, preview_modal])
+            btn_delete.click(_on_delete_click, [selected_name], [confirm_text, confirm_modal, pending_delete])
+
+            # Confirm modal buttons
+            confirm_yes.click(
+                _confirm_delete,
+                [pending_delete],
+                [status_md, confirm_modal, pending_delete],
+            ).then(refresh_all, [search, sort_by, sort_dir], [table, selected_name])
+            confirm_no.click(_close_confirm, None, confirm_modal)
+
+    # (клик по ячейке не используется; действуйте через выпадающий список и кнопки)
 
         with gr.TabItem("Загрузка и индексация"):
             gr.Markdown(
@@ -183,20 +216,6 @@ with gr.Blocks(title="Документы (хранилище и индекс)", 
             upload_status = gr.Textbox(label="Статус", interactive=False)
             upload_btn = gr.Button("Индексировать")
             upload_btn.click(_on_upload, [uploader], [upload_status])
-
-        with gr.TabItem("Удаление из векторного хранилища"):
-            gr.Markdown(
-                "Отметьте имена файлов для удаления (по метаданному file_name).")
-            vec_list = gr.CheckboxGroup(
-                choices=_vector_list(), label="Файлы в индексе")
-            del_btn = gr.Button("Удалить отмеченные")
-            del_status = gr.Textbox(label="Статус", interactive=False)
-            del_btn.click(_on_delete, [vec_list], [del_status, vec_list])
-            refresh_vec = gr.Button("Обновить список")
-            refresh_vec.click(lambda: gr.update(
-                choices=_vector_list()), None, [vec_list])
-
-    # (Просмотр перенесён в таблицу — отдельная вкладка больше не нужна)
 
 
 if __name__ == "__main__":
