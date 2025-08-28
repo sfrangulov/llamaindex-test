@@ -51,8 +51,8 @@ def _load_rows(search: str, sort_by: str, sort_dir: str) -> List[Dict]:
     for r in rows:
         data.append(
             {
-                # keep original name for actions (hidden column in table)
-                "file_name": r["file_name"],
+                # use Dash DataTable row IDs for robust selection across sorting/filtering
+                "id": r["file_name"],
                 COL_TITLE: r["file_name"],
                 COL_SIZE: _format_size(r.get("size_bytes")),
                 COL_DATE: r.get("uploaded_at_iso") or "",
@@ -137,7 +137,6 @@ app.layout = dbc.Container(
                     dash_table.DataTable(
                         id="files-table",
                         columns=[
-                            {"name": "file_name", "id": "file_name"},  # hidden technical column
                             {"name": COL_TITLE, "id": COL_TITLE},
                             {"name": COL_SIZE, "id": COL_SIZE},
                             {"name": COL_DATE, "id": COL_DATE},
@@ -146,12 +145,19 @@ app.layout = dbc.Container(
                         page_size=15,
                         sort_action="none",
                         row_selectable="single",
-                        selected_rows=[],
-                        hidden_columns=["file_name"],
+                        selected_row_ids=[],
                         style_table={"overflowX": "auto"},
                         style_cell={
                             "textAlign": "left", "fontFamily": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"},
                         style_header={"fontWeight": "600"},
+                        style_data_conditional=[
+                            {
+                                "if": {"column_id": COL_TITLE},
+                                "color": "#0d6efd",
+                                "textDecoration": "underline",
+                                "cursor": "pointer",
+                            }
+                        ],
                     ),
                     html.Br(),
                     dbc.Row([
@@ -218,6 +224,8 @@ app.layout = dbc.Container(
 
         dcc.Store(id="files-data", data=initial_data),
         dcc.Store(id="pending-delete"),
+    # signal to trigger table reloads from multiple callbacks without duplicate outputs
+    dcc.Store(id="reload-signal", data=0),
     ],
 )
 
@@ -225,16 +233,17 @@ app.layout = dbc.Container(
 # Refresh table when inputs change
 @app.callback(
     Output("files-table", "data"),
-    Output("files-table", "selected_rows"),
+    Output("files-table", "selected_row_ids"),
     Output("files-data", "data"),
     Output("badge-vector-count", "children"),
+    Input("reload-signal", "data"),
     Input("search", "value"),
     Input("sort_by", "value"),
     Input("sort_dir", "value"),
     Input("refresh", "n_clicks"),
     prevent_initial_call=False,
 )
-def refresh_table(search, sort_by, sort_dir, _):
+def refresh_table(_tick, search, sort_by, sort_dir, _):
     s = (search or "").strip()
     sb = sort_by or DEFAULT_SORT_BY
     sd = sort_dir or DEFAULT_SORT_DIR
@@ -243,13 +252,10 @@ def refresh_table(search, sort_by, sort_dir, _):
     return data, [], data, badge
 
 
-def _selected_file_name(table_data: List[Dict], selected_rows: List[int]) -> str | None:
-    if not table_data or not selected_rows:
+def _selected_file_name(selected_row_ids: List[str] | None) -> str | None:
+    if not selected_row_ids:
         return None
-    idx = selected_rows[0]
-    if 0 <= idx < len(table_data):
-        return table_data[idx].get("file_name")
-    return None
+    return selected_row_ids[0]
 
 
 # Preview flow
@@ -257,14 +263,26 @@ def _selected_file_name(table_data: List[Dict], selected_rows: List[int]) -> str
     Output("preview-md", "children"),
     Output("modal-preview", "is_open"),
     Input("btn-preview", "n_clicks"),
+    Input("files-table", "active_cell"),
     State("files-table", "data"),
-    State("files-table", "selected_rows"),
+    State("files-table", "selected_row_ids"),
     prevent_initial_call=True,
 )
-def on_preview(n_clicks, table_data, selected_rows):
-    if not n_clicks:
-        raise PreventUpdate
-    name = _selected_file_name(table_data, selected_rows)
+def on_preview(n_clicks, active_cell, table_data, selected_row_ids):
+    trigger = ctx.triggered_id
+    name = None
+    if trigger == "btn-preview":
+        if not n_clicks:
+            raise PreventUpdate
+        name = _selected_file_name(selected_row_ids)
+    elif trigger == "files-table":
+        if not active_cell:
+            raise PreventUpdate
+        if active_cell.get("column_id") != COL_TITLE:
+            raise PreventUpdate
+        # use stable row_id to get the file name regardless of sorting/filtering
+        name = active_cell.get("row_id")
+
     if not name:
         return "Выберите файл", True
     return read_markdown(name), True
@@ -273,48 +291,65 @@ def on_preview(n_clicks, table_data, selected_rows):
 # Delete ask
 @app.callback(
     Output("confirm-text", "children"),
-    Output("modal-confirm", "is_open"),
     Output("pending-delete", "data"),
     Input("btn-delete", "n_clicks"),
     State("files-table", "data"),
-    State("files-table", "selected_rows"),
+    State("files-table", "selected_row_ids"),
     prevent_initial_call=True,
 )
-def on_delete_click(n_clicks, table_data, selected_rows):
+def on_delete_click(n_clicks, table_data, selected_row_ids):
     if not n_clicks:
         raise PreventUpdate
-    name = _selected_file_name(table_data, selected_rows)
+    name = _selected_file_name(selected_row_ids)
     if not name:
-        return "Выберите файл для удаления", True, None
-    return f"Удалить из векторного хранилища: {name}?", True, name
+        return "Выберите файл для удаления", None
+    return f"Удалить из векторного хранилища: {name}?", name
+
+
+# Single callback to control the confirm modal visibility
+@app.callback(
+    Output("modal-confirm", "is_open"),
+    Input("btn-delete", "n_clicks"),
+    Input("confirm-yes", "n_clicks"),
+    Input("confirm-no", "n_clicks"),
+    State("modal-confirm", "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_confirm_modal(btn_delete, yes, no, is_open):
+    trigger = ctx.triggered_id
+    if trigger == "btn-delete":
+        return True
+    if trigger in ("confirm-yes", "confirm-no"):
+        return False
+    raise PreventUpdate
 
 
 # Confirm delete
 @app.callback(
     Output("status-area", "children"),
-    Output("modal-confirm", "is_open"),
     Output("pending-delete", "data"),
-    Output("refresh", "n_clicks"),  # trigger refresh
+    Output("reload-signal", "data"),  # trigger table reload
     Input("confirm-yes", "n_clicks"),
     Input("confirm-no", "n_clicks"),
     State("pending-delete", "data"),
+    State("reload-signal", "data"),
     prevent_initial_call=True,
 )
-def on_confirm_delete(yes, no, pending):
+def on_confirm_delete(yes, no, pending, tick):
     trigger = ctx.triggered_id
     if trigger == "confirm-no":
-        return "", False, None, dash.no_update
+        return "", None, dash.no_update
     if trigger == "confirm-yes":
         if not pending:
-            return dbc.Alert("Имя файла не задано", color="warning", dismissible=True), False, None, dash.no_update
+            return dbc.Alert("Имя файла не задано", color="warning", dismissible=True), None, dash.no_update
         count = delete_from_vector_store_by_file_names([pending])
         msg = dbc.Alert(
             f"Удалено из векторного хранилища: {pending} (записей: {count})",
             color="success",
             dismissible=True,
         )
-        # bump refresh clicks to trigger table reload
-        return msg, False, None, (yes or 0) + 1
+        # bump reload signal to trigger table reload
+        return msg, None, (tick or 0) + 1
     raise PreventUpdate
 
 
@@ -342,12 +377,13 @@ def on_upload(contents, filenames):
     Output("upload-status", "children"),
     Output("upload-status", "is_open"),
     Output("upload-status", "color"),
-    Output("refresh", "n_clicks"),  # trigger table refresh
+    Output("reload-signal", "data"),  # trigger table refresh
     Input("btn-index", "n_clicks"),
     State("upload-cache", "data"),
+    State("reload-signal", "data"),
     prevent_initial_call=True,
 )
-def on_index(n_clicks, items):
+def on_index(n_clicks, items, tick):
     if not n_clicks:
         raise PreventUpdate
     if not items:
@@ -377,15 +413,15 @@ def on_index(n_clicks, items):
 
     if added and not errors:
         msg = "Загружено:\n" + "\n".join(added)
-        return msg, True, "success", (n_clicks or 0) + 1
+        return msg, True, "success", (tick or 0) + 1
     if added and errors:
         msg = "\n".join(["Частично загружено:"] + added + [""] + errors)
-        return msg, True, "warning", (n_clicks or 0) + 1
+        return msg, True, "warning", (tick or 0) + 1
     # type: ignore[name-defined]
     return ("\n".join(["Не удалось обработать файлы:"] + errors) if errors else "Нет поддерживаемых файлов"), True, "danger", dash.no_update
 
 
 if __name__ == "__main__":
-    warmup()
+    warmup(ensure_index=True)
     app.run(host=os.getenv("HOST", "0.0.0.0"), port=int(
         os.getenv("PORT", "7861")), debug=False)
