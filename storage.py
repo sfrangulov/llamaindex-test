@@ -83,7 +83,6 @@ def get_index() -> VectorStoreIndex:
             with open(os.path.join(CFG.md_dir, f"{doc.metadata['file_name']}.md"), "w", encoding="utf-8") as f:
                 f.write(doc.text)
         _index = VectorStoreIndex.from_documents(documents)
-        _index.storage_context.persist(persist_dir=CFG.persist_dir)
     else:
         _index = VectorStoreIndex.from_vector_store(
             _get_vector_store())

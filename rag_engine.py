@@ -14,6 +14,7 @@ from llama_index.core.workflow import (
     StopEvent,
 )
 from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from google.genai.types import EmbedContentConfig
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.google_genai import GoogleGenAI
@@ -71,7 +72,7 @@ def configure_settings() -> None:
 def configure_settings_gemini() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     Settings.embed_model = GoogleGenAIEmbedding(
-        model_name="gemini-embedding-001",          # новое имя модели
+        model_name="gemini-embedding-001",
         embed_batch_size=80,
         retry_min_seconds=60,
         retry_max_seconds=120,
@@ -85,16 +86,11 @@ def configure_settings_gemini() -> None:
 
 def configure_settings_ollama() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
-    Settings.embed_model = GoogleGenAIEmbedding(
-        model_name="gemini-embedding-001",          # новое имя модели
-        embed_batch_size=100,
-        embedding_config=EmbedContentConfig(
-            output_dimensionality=768,
-            task_type="RETRIEVAL_DOCUMENT"
-        )
+    Settings.embed_model = HuggingFaceEmbedding(
+        model_name="BAAI/bge-small-en-v1.5"
     )
     Settings.llm = Ollama(model="qwen3:0.6b", temperature=0.1,
-                          request_timeout=120.0, thinking=False)  # thinking=False,
+                          request_timeout=120.0, thinking=False)
 
 
 def _build_sources(response) -> List[Dict[str, Any]]:
