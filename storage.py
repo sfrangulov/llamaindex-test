@@ -16,8 +16,6 @@ from llama_index.core.schema import Document
 import structlog
 log = structlog.get_logger(__name__)
 
-# LlamaIndex core
-
 
 @dataclass(frozen=True)
 class Config:
@@ -27,7 +25,6 @@ class Config:
     md_dir: Path = Path(os.getenv("MD_DIR", "./data/markdown"))
 
 
-# ---------------------------- DB ----------------------------
 _db: Optional[chromadb.PersistentClient] = None
 _vector_store: Optional[ChromaVectorStore] = None
 _index: Optional[VectorStoreIndex] = None
@@ -74,16 +71,19 @@ def get_index() -> VectorStoreIndex:
     if _index is not None:
         return _index
 
+    ensure_dirs()
+
     collection = _get_db().get_or_create_collection(CFG.collection)
     if collection.count() == 0:
-        # Build from documents
         documents = load_documents()
         os.makedirs(CFG.md_dir, exist_ok=True)
         for doc in documents:
             with open(os.path.join(CFG.md_dir, f"{doc.metadata['file_name']}.md"), "w", encoding="utf-8") as f:
                 f.write(doc.text)
-        _index = VectorStoreIndex.from_documents(documents)
+        storage_context = StorageContext.from_defaults(
+            vector_store=_get_vector_store())
+        _index = VectorStoreIndex.from_documents(
+            documents, storage_context=storage_context)
     else:
-        _index = VectorStoreIndex.from_vector_store(
-            _get_vector_store())
+        _index = VectorStoreIndex.from_vector_store(_get_vector_store())
     return _index
