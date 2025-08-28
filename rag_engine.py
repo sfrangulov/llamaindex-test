@@ -65,8 +65,8 @@ RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
-    # configure_settings_gemini()
-    configure_settings_local()
+    configure_settings_gemini()
+    # configure_settings_local()
     Settings.node_parser = MarkdownNodeParser()
 
 
@@ -96,9 +96,9 @@ def configure_settings_local() -> None:
     Settings.ranker = SentenceTransformerRerank(
         model="DiTy/cross-encoder-russian-msmarco", top_n=max(10, TOP_K)
     )  # "cross-encoder/ms-marco-MiniLM-L-2-v2"
-    Settings.llm = HuggingFaceLLM(
-        model_name="unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit", )
-    # Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
+    # Settings.llm = HuggingFaceLLM(
+    #    model_name="unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit", )
+    Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
 
 
 def _build_sources(response) -> List[Dict[str, Any]]:
