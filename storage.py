@@ -9,7 +9,7 @@ from llama_index.core import (
     StorageContext,
 )
 import os
-from typing import Any, List, Optional
+from typing import Optional
 from md_reader import MarkItDownReader
 from llama_index.core.schema import Document
 
