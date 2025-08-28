@@ -51,6 +51,8 @@ def _load_rows(search: str, sort_by: str, sort_dir: str) -> List[Dict]:
     for r in rows:
         data.append(
             {
+                # keep original name for actions (hidden column in table)
+                "file_name": r["file_name"],
                 COL_TITLE: r["file_name"],
                 COL_SIZE: _format_size(r.get("size_bytes")),
                 COL_DATE: r.get("uploaded_at_iso") or "",
@@ -135,6 +137,7 @@ app.layout = dbc.Container(
                     dash_table.DataTable(
                         id="files-table",
                         columns=[
+                            {"name": "file_name", "id": "file_name"},  # hidden technical column
                             {"name": COL_TITLE, "id": COL_TITLE},
                             {"name": COL_SIZE, "id": COL_SIZE},
                             {"name": COL_DATE, "id": COL_DATE},
@@ -144,6 +147,7 @@ app.layout = dbc.Container(
                         sort_action="none",
                         row_selectable="single",
                         selected_rows=[],
+                        hidden_columns=["file_name"],
                         style_table={"overflowX": "auto"},
                         style_cell={
                             "textAlign": "left", "fontFamily": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"},
@@ -302,12 +306,12 @@ def on_confirm_delete(yes, no, pending):
         return "", False, None, dash.no_update
     if trigger == "confirm-yes":
         if not pending:
-            return dbc.Alert("Имя файла не задано", color="warning", dismissable=True), False, None, dash.no_update
+            return dbc.Alert("Имя файла не задано", color="warning", dismissible=True), False, None, dash.no_update
         count = delete_from_vector_store_by_file_names([pending])
         msg = dbc.Alert(
             f"Удалено из векторного хранилища: {pending} (записей: {count})",
             color="success",
-            dismissable=True,
+            dismissible=True,
         )
         # bump refresh clicks to trigger table reload
         return msg, False, None, (yes or 0) + 1
