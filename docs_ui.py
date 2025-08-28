@@ -140,9 +140,9 @@ with gr.Blocks(title="Документы (хранилище и индекс)", 
 			# Overlay preview (CSS-based modal)
 			with gr.Group(visible=False, elem_classes=["modal-overlay"]) as preview_overlay:
 				with gr.Column(elem_classes=["modal-content"]):
+					preview_md = gr.Markdown("Загрузка…")
 					with gr.Row(elem_classes=["modal-actions"]):
 						close_btn = gr.Button("Закрыть")
-					preview_md = gr.Markdown("Загрузка…")
 
 			# Open modal when clicking on the first column (Название)
 			def on_cell_select(evt: gr.SelectData):
