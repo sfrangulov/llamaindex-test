@@ -167,7 +167,7 @@ def delete_from_vector_store_by_file_names(file_names: list[str]) -> int:
     return deleted
 
 
-def add_docx_to_store(file: Path, *, persist_original: bool = True) -> dict:
+def add_docx_to_store(file: Path, *, persist_original: bool = True, target_file_name: str | None = None) -> dict:
     """Convert a single DOCX to markdown, upsert into vector store, and persist md.
 
     If vectors for the same file_name exist, they are removed before insert to avoid duplicates.
@@ -179,7 +179,17 @@ def add_docx_to_store(file: Path, *, persist_original: bool = True) -> dict:
     if not docs:
         raise RuntimeError(f"No content extracted from {file}")
     doc = docs[0]
-    file_name = doc.metadata.get("file_name", file.name)
+    # Determine final file name used for storage and metadata
+    file_name = target_file_name or doc.metadata.get("file_name") or Path(file).name
+    # Normalize to just the base name
+    file_name = Path(file_name).name
+    # Ensure consistent metadata for downstream filters
+    try:
+        md = dict(doc.metadata or {})
+        md["file_name"] = file_name
+        doc.metadata = md
+    except Exception:
+        pass
 
     # Persist original .docx into storage for listing, if requested
     if persist_original:
@@ -228,3 +238,50 @@ def read_markdown(file_name: str) -> str:
         return f"Файл Markdown не найден: {md_path}"
     except Exception as e:
         return f"Ошибка чтения Markdown: {e}"
+
+
+# Public helpers for the Dash UI
+def list_documents(search: str | None = None) -> list[dict]:
+    """Alias of list_storage_files for UI acceptance criteria."""
+    return list_storage_files(search)
+
+
+def delete_document(file_name: str) -> dict:
+    """Delete a document end-to-end: vectors, markdown copy, and original file.
+
+    Returns a dict summary: {"file_name", "vectors_deleted", "file_deleted", "md_deleted"}
+    """
+    ensure_dirs()
+    vectors_deleted = 0
+    file_deleted = False
+    md_deleted = False
+
+    try:
+        vectors_deleted = delete_from_vector_store_by_file_names([file_name])
+    except Exception as e:
+        log.warning("vector_delete_failed", file_name=file_name, error=e)
+
+    # Delete markdown sidecar
+    try:
+        md_path = CFG.md_dir / f"{file_name}.md"
+        if md_path.exists():
+            md_path.unlink()
+            md_deleted = True
+    except Exception as e:
+        log.warning("markdown_delete_failed", file_name=file_name, error=e)
+
+    # Delete original file under attachments
+    try:
+        path = CFG.data_path / file_name
+        if path.exists():
+            path.unlink()
+            file_deleted = True
+    except Exception as e:
+        log.warning("file_delete_failed", file_name=file_name, error=e)
+
+    return {
+        "file_name": file_name,
+        "vectors_deleted": vectors_deleted,
+        "file_deleted": file_deleted,
+        "md_deleted": md_deleted,
+    }
