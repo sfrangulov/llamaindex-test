@@ -14,3 +14,4 @@ markitdown[all]
 gradio_modal #del
 dash
 dash_bootstrap_components
+dash-mantine-components

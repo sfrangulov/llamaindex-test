@@ -45,7 +45,6 @@ def build_table_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "file_name": r.get("file_name"),
                 "uploaded_at": r.get("uploaded_at_iso"),
                 "size": bytes_to_human(r.get("size_bytes")),
-                "size_bytes": r.get("size_bytes"),  # hidden helper
                 "view": "View",
                 "delete": "Delete",
             }
@@ -65,7 +64,8 @@ def extract_file_from_row(data: List[Dict[str, Any]], row: Optional[int]) -> Opt
 # ----------------------------- App -----------------------------
 
 external_stylesheets = [dbc.themes.BOOTSTRAP]
-app: Dash = Dash(__name__, external_stylesheets=external_stylesheets, suppress_callback_exceptions=True)
+app: Dash = Dash(__name__, external_stylesheets=external_stylesheets,
+                 suppress_callback_exceptions=True)
 server = app.server
 
 
@@ -73,24 +73,19 @@ DOCS_COLUMNS = [
     {"name": "File name", "id": "file_name", "type": "text"},
     {"name": "Uploaded at", "id": "uploaded_at", "type": "text"},
     {"name": "Size", "id": "size", "type": "text"},
-    # helper columns
-    {"name": "size_bytes", "id": "size_bytes", "type": "numeric", "hidden": True},
     # action pseudo-columns (clickable via active_cell)
-    {"name": "View", "id": "view", "type": "text", "presentation": "markdown"},
-    {"name": "Delete", "id": "delete", "type": "text", "presentation": "markdown"},
+    {"name": "View", "id": "view", "type": "text"},
+    {"name": "Delete", "id": "delete", "type": "text"},
 ]
 
 
 app.layout = dbc.Container(
     [
         dcc.Store(id="docs-cache"),  # raw docs list
-        dcc.Store(id="refresh-ts", data=time.time()),  # timestamp to force refresh (initialized)
+        # timestamp to force refresh (initialized)
+        dcc.Store(id="refresh-ts", data=time.time()),
         dcc.Store(id="pending-delete-file"),
         dcc.Store(id="preview-file"),
-    # Fire once on initial load to ensure docs refresh happens even if initial callback doesn't trigger
-    dcc.Interval(id="refresh-on-load", interval=150, n_intervals=0, max_intervals=1),
-
-        html.H2("Documents Manager"),
         dcc.Tabs(
             id="tabs",
             value="tab-docs",
@@ -108,7 +103,8 @@ app.layout = dbc.Container(
                             width=6,
                         ),
                         dbc.Col(
-                            html.Div(id="action-hint", className="text-muted", style={"paddingTop": "6px"}),
+                            html.Div(id="action-hint", className="text-muted",
+                                     style={"paddingTop": "6px"}),
                             width=6,
                         ),
                     ], className="mb-2"),
@@ -116,9 +112,15 @@ app.layout = dbc.Container(
                         id="docs-table",
                         columns=DOCS_COLUMNS,
                         data=[],
-                        page_size=25,
+                        page_size=20,
                         sort_action="native",
                         sort_mode="multi",
+                        sort_by=[
+                            {
+                                "column_id": "uploaded_at",
+                                "direction": "desc"
+                            }
+                        ],
                         page_action="native",
                         filter_action="none",
                         style_table={"overflowX": "auto"},
@@ -143,10 +145,13 @@ app.layout = dbc.Container(
                     # Preview Modal
                     dbc.Modal(
                         [
-                            dbc.ModalHeader(dbc.ModalTitle(id="preview-title")),
-                            dbc.ModalBody(dcc.Markdown(id="preview-content", style={"whiteSpace": "pre-wrap"})),
+                            dbc.ModalHeader(
+                                dbc.ModalTitle(id="preview-title")),
+                            dbc.ModalBody(dcc.Markdown(
+                                id="preview-content", style={"whiteSpace": "pre-wrap"})),
                             dbc.ModalFooter(
-                                dbc.Button("Close", id="close-preview", className="ms-auto", color="secondary")
+                                dbc.Button("Close", id="close-preview",
+                                           className="ms-auto", color="secondary")
                             ),
                         ],
                         id="preview-modal",
@@ -159,12 +164,15 @@ app.layout = dbc.Container(
                     # Delete confirm Modal
                     dbc.Modal(
                         [
-                            dbc.ModalHeader(dbc.ModalTitle("Confirm deletion")),
+                            dbc.ModalHeader(
+                                dbc.ModalTitle("Confirm deletion")),
                             dbc.ModalBody(id="delete-confirm-body"),
                             dbc.ModalFooter(
                                 [
-                                    dbc.Button("Cancel", id="cancel-delete", color="secondary", className="me-2"),
-                                    dbc.Button("Delete", id="confirm-delete", color="danger"),
+                                    dbc.Button(
+                                        "Cancel", id="cancel-delete", color="secondary", className="me-2"),
+                                    dbc.Button(
+                                        "Delete", id="confirm-delete", color="danger"),
                                 ]
                             ),
                         ],
@@ -184,7 +192,8 @@ app.layout = dbc.Container(
                                 duration=4000,
                                 icon="success",
                                 children="",
-                                style={"position": "fixed", "top": 10, "right": 10, "zIndex": 2000},
+                                style={"position": "fixed", "top": 10,
+                                       "right": 10, "zIndex": 2000},
                             ),
                             dbc.Toast(
                                 id="toast-error",
@@ -194,7 +203,8 @@ app.layout = dbc.Container(
                                 duration=6000,
                                 icon="danger",
                                 children="",
-                                style={"position": "fixed", "top": 10, "right": 10, "zIndex": 2000},
+                                style={"position": "fixed", "top": 10,
+                                       "right": 10, "zIndex": 2000},
                             ),
                         ]
                     ),
@@ -221,8 +231,10 @@ app.layout = dbc.Container(
                             width=12,
                         ),
                     ], className="my-3"),
-                    dbc.Button("Upload & Index", id="upload-btn", color="primary"),
-                    dcc.Loading(id="upload-loading", type="default", children=html.Div(id="upload-status", className="mt-3")),
+                    dbc.Button("Upload & Index",
+                               id="upload-btn", color="primary"),
+                    dcc.Loading(id="upload-loading", type="default",
+                                children=html.Div(id="upload-status", className="mt-3")),
                 ]),
             ],
         ),
@@ -244,21 +256,12 @@ def refresh_documents(_: Optional[Any]):
     t0 = time.time()
     try:
         docs = storage.list_documents()
-        log.info("documents_listed", action="documents_listed", count=len(docs), duration_ms=int((time.time()-t0)*1000))
+        log.info("documents_listed", action="documents_listed",
+                 count=len(docs), duration_ms=int((time.time()-t0)*1000))
         return docs, f"{len(docs)} documents"
     except Exception as e:
         log.error("documents_list_failed", error=str(e))
         return [], "Failed to load documents"
-
-
-@app.callback(
-    Output("refresh-ts", "data"),
-    Input("refresh-on-load", "n_intervals"),
-    prevent_initial_call=True,
-)
-def trigger_initial_refresh(_):
-    # Trigger refresh when the one-shot Interval fires after initial load
-    return time.time()
 
 
 @app.callback(
@@ -326,9 +329,11 @@ def handle_table_click(active_cell, table_data, close_preview, cancel_delete):
                         except Exception:
                             text = ""
                     content = text or "(No preview available)"
-                log.info("document_previewed", action="document_previewed", filename=file_name, duration_ms=int((time.time()-t0)*1000))
+                log.info("document_previewed", action="document_previewed",
+                         filename=file_name, duration_ms=int((time.time()-t0)*1000))
             except Exception as e:
-                log.error("document_preview_failed", filename=file_name, error=str(e))
+                log.error("document_preview_failed",
+                          filename=file_name, error=str(e))
                 content = f"Error loading preview: {e}"
 
             open_preview = True
@@ -337,7 +342,8 @@ def handle_table_click(active_cell, table_data, close_preview, cancel_delete):
 
         elif col == "delete":
             open_delete = True
-            delete_body = html.Div([html.P(f"Delete '{file_name}'? This will remove the file and its vectors." )])
+            delete_body = html.Div(
+                [html.P(f"Delete '{file_name}'? This will remove the file and its vectors.")])
             pending_file = file_name
 
     elif trig == "close-preview":
@@ -418,12 +424,14 @@ def handle_upload(n_clicks, contents_list, filenames):
             errors.append(f"Failed to parse {original_name}")
             continue
         try:
-            tmp = Path(storage.CFG.data_path) / f".__tmp__{int(time.time()*1000)}_{Path(original_name).name}"
+            tmp = Path(storage.CFG.data_path) / \
+                f".__tmp__{int(time.time()*1000)}_{Path(original_name).name}"
             tmp.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "wb") as f:
                 f.write(bio.getvalue())
             # Persist + index
-            storage.add_docx_to_store(tmp, persist_original=True, target_file_name=Path(original_name).name)
+            storage.add_docx_to_store(
+                tmp, persist_original=True, target_file_name=Path(original_name).name)
             # Remove temp file if copy succeeded
             try:
                 if tmp.exists():
@@ -436,11 +444,14 @@ def handle_upload(n_clicks, contents_list, filenames):
 
     duration_ms = int((time.time() - started_at) * 1000)
     if errors:
-        log.error("upload_failed", action="upload_failed", error=errors, duration_ms=duration_ms)
+        log.error("upload_failed", action="upload_failed",
+                  error=errors, duration_ms=duration_ms)
     else:
-        log.info("upload_finished", action="upload_finished", count=successes, duration_ms=duration_ms)
+        log.info("upload_finished", action="upload_finished",
+                 count=successes, duration_ms=duration_ms)
 
-    status_children = [html.Div(f"Uploaded {successes} / {len(filenames)} files." )]
+    status_children = [
+        html.Div(f"Uploaded {successes} / {len(filenames)} files.")]
     if errors:
         status_children.append(html.Ul([html.Li(e) for e in errors]))
 
