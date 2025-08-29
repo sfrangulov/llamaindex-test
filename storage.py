@@ -47,11 +47,14 @@ def _get_db() -> chromadb.PersistentClient:
         )
     return _db
 
+def _get_chroma_collection():
+    return _get_db().get_or_create_collection(CFG.collection)
+
 
 def _get_vector_store() -> ChromaVectorStore:
     global _vector_store
     if _vector_store is None:
-        col = _get_db().get_or_create_collection(CFG.collection)
+        col = _get_chroma_collection()
         _vector_store = ChromaVectorStore(chroma_collection=col)
     return _vector_store
 
@@ -74,7 +77,7 @@ def get_index() -> VectorStoreIndex:
 
     ensure_dirs()
 
-    collection = _get_db().get_or_create_collection(CFG.collection)
+    collection =_get_chroma_collection()
     if collection.count() == 0:
         documents = load_documents()
         os.makedirs(CFG.md_dir, exist_ok=True)
@@ -124,10 +127,6 @@ def list_storage_files(search: str | None = None) -> list[dict]:
     # Sort by name by default
     results.sort(key=lambda r: r["file_name"].lower())
     return results
-
-
-def _get_chroma_collection():
-    return _get_db().get_or_create_collection(CFG.collection)
 
 
 def list_vector_file_names() -> list[str]:
