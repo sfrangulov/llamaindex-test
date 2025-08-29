@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
 import dash
 from dash import Dash, Input, Output, State, dcc, html
@@ -41,7 +42,7 @@ def build_table_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out.append(
             {
                 "file_name": r.get("file_name"),
-                "uploaded_at": r.get("uploaded_at_iso"),
+                "uploaded_at": (lambda s: (datetime.fromisoformat(s.replace("Z", "+00:00")).strftime("%d.%m.%Y %H:%M:%S") if s else "—"))(r.get("uploaded_at_iso")),
                 "size": bytes_to_human(r.get("size_bytes")),
             }
         )
