@@ -110,8 +110,8 @@ def render_docs_table(rows: List[Dict[str, Any]]):
     header = dmc.TableThead(
         dmc.TableTr(
             [
-                dmc.TableTh("File name"),
-                dmc.TableTh("Uploaded at"),
+                dmc.TableTh("Document"),
+                dmc.TableTh("Uploaded At"),
                 dmc.TableTh("Size"),
                 dmc.TableTh(""),
                 dmc.TableTh(""),
