@@ -4,14 +4,12 @@ import base64
 import io
 import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import dash
 from dash import Dash, Input, Output, State, dcc, html
-from dash.dash_table import DataTable
-import dash_bootstrap_components as dbc
+import dash_mantine_components as dmc
 
 import structlog
 
@@ -37,7 +35,7 @@ def bytes_to_human(n: Optional[int]) -> str:
 
 
 def build_table_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    # Enrich with display fields and action columns
+    # Enrich with display fields
     out: List[Dict[str, Any]] = []
     for r in rows:
         out.append(
@@ -45,8 +43,6 @@ def build_table_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "file_name": r.get("file_name"),
                 "uploaded_at": r.get("uploaded_at_iso"),
                 "size": bytes_to_human(r.get("size_bytes")),
-                "view": "View",
-                "delete": "Delete",
             }
         )
     return out
@@ -61,162 +57,194 @@ def extract_file_from_row(data: List[Dict[str, Any]], row: Optional[int]) -> Opt
         return None
 
 
+def _load_markdown_or_fallback(file_name: str) -> str:
+    """Load saved markdown; if missing or error text, regenerate plain text preview."""
+    try:
+        md = storage.read_markdown(file_name)
+    except Exception as e:
+        log.error("read_markdown_failed", filename=file_name, error=str(e))
+        md = ""
+    if md and not (md.startswith("Файл Markdown не найден") or md.startswith("Ошибка")):
+        return md
+    # Fallback
+    path = storage.CFG.data_path / file_name
+    if not path.exists():
+        return "(No preview available)"
+    try:
+        reader = MarkItDownReader()
+        docs = reader.load_data(path)
+        return (docs[0].text or "") if docs else "(No preview available)"
+    except Exception as e:
+        log.error("fallback_preview_failed", filename=file_name, error=str(e))
+        return "(No preview available)"
+
+
+def _process_single_upload(contents: str, original_name: str) -> Optional[str]:
+    """Persist a single uploaded file and index it. Returns error message if any."""
+    bio, _ = _parse_upload(contents, original_name)
+    if bio is None:
+        return f"Failed to parse {original_name}"
+    try:
+        tmp = Path(storage.CFG.data_path) / f".__tmp__{int(time.time()*1000)}_{Path(original_name).name}"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "wb") as f:
+            f.write(bio.getvalue())
+        storage.add_docx_to_store(tmp, persist_original=True, target_file_name=Path(original_name).name)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        return f"{original_name}: {e}"
+
+
 # ----------------------------- App -----------------------------
 
-external_stylesheets = [dbc.themes.BOOTSTRAP]
-app: Dash = Dash(__name__, external_stylesheets=external_stylesheets,
-                 suppress_callback_exceptions=True)
+app: Dash = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 
-
-DOCS_COLUMNS = [
-    {"name": "File name", "id": "file_name", "type": "text"},
-    {"name": "Uploaded at", "id": "uploaded_at", "type": "text"},
-    {"name": "Size", "id": "size", "type": "text"},
-    # action pseudo-columns (clickable via active_cell)
-    {"name": "View", "id": "view", "type": "text"},
-    {"name": "Delete", "id": "delete", "type": "text"},
-]
-
-
-app.layout = dbc.Container(
-    [
-        dcc.Store(id="docs-cache"),  # raw docs list
-        # timestamp to force refresh (initialized)
-        dcc.Store(id="refresh-ts", data=time.time()),
-        dcc.Store(id="pending-delete-file"),
-        dcc.Store(id="preview-file"),
-        dcc.Tabs(
-            id="tabs",
-            value="tab-docs",
-            children=[
-                dcc.Tab(label="Documents", value="tab-docs", children=[
-                    dbc.Row([
-                        dbc.Col(
-                            dcc.Input(
-                                id="search-input",
-                                placeholder="Search by file name…",
-                                type="text",
-                                debounce=True,
-                                style={"width": "100%"},
-                            ),
-                            width=6,
-                        ),
-                        dbc.Col(
-                            html.Div(id="action-hint", className="text-muted",
-                                     style={"paddingTop": "6px"}),
-                            width=6,
-                        ),
-                    ], className="mb-2"),
-                    DataTable(
-                        id="docs-table",
-                        columns=DOCS_COLUMNS,
-                        data=[],
-                        page_size=20,
-                        sort_action="native",
-                        sort_mode="multi",
-                        sort_by=[
-                            {
-                                "column_id": "uploaded_at",
-                                "direction": "desc"
-                            }
-                        ],
-                        page_action="native",
-                        filter_action="none",
-                        style_table={"overflowX": "auto"},
-                        style_cell={
-                            "minWidth": "120px",
-                            "maxWidth": "420px",
-                            "whiteSpace": "nowrap",
-                            "textOverflow": "ellipsis",
-                        },
-                        style_header={"fontWeight": "600"},
-                        style_data_conditional=[
-                            {
-                                "if": {"column_id": col},
-                                "color": "#0d6efd",
-                                "textDecoration": "underline",
-                                "cursor": "pointer",
-                            }
-                            for col in ["view", "delete"]
-                        ],
+def render_docs_table(rows: List[Dict[str, Any]]):
+    header = dmc.TableThead(
+        dmc.TableTr(
+            [
+                dmc.TableTh("File name"),
+                dmc.TableTh("Uploaded at"),
+                dmc.TableTh("Size"),
+                dmc.TableTh(""),
+                dmc.TableTh(""),
+            ]
+        )
+    )
+    body_rows = []
+    for r in rows:
+        file = r.get("file_name")
+        body_rows.append(
+            dmc.TableTr(
+                [
+                    dmc.TableTd(file),
+                    dmc.TableTd(r.get("uploaded_at")),
+                    dmc.TableTd(r.get("size")),
+                    dmc.TableTd(
+                        dmc.Button(
+                            "View",
+                            id={"type": "view-doc", "file": file},
+                            variant="subtle",
+                            size="xs",
+                        )
                     ),
-
-                    # Preview Modal
-                    dbc.Modal(
-                        [
-                            dbc.ModalHeader(
-                                dbc.ModalTitle(id="preview-title")),
-                            dbc.ModalBody(dcc.Markdown(
-                                id="preview-content", style={"whiteSpace": "pre-wrap"})),
-                            dbc.ModalFooter(
-                                dbc.Button("Close", id="close-preview",
-                                           className="ms-auto", color="secondary")
-                            ),
-                        ],
-                        id="preview-modal",
-                        is_open=False,
-                        size="xl",
-                        scrollable=True,
-                        fullscreen=False,
+                    dmc.TableTd(
+                        dmc.Button(
+                            "Delete",
+                            id={"type": "delete-doc", "file": file},
+                            color="red",
+                            variant="subtle",
+                            size="xs",
+                        )
                     ),
+                ]
+            )
+        )
+    table = dmc.Table(
+        [header, dmc.TableTbody(body_rows)],
+        striped=True,
+        highlightOnHover=True,
+        withRowBorders=False,
+    )
+    return table
 
-                    # Delete confirm Modal
-                    dbc.Modal(
-                        [
-                            dbc.ModalHeader(
-                                dbc.ModalTitle("Confirm deletion")),
-                            dbc.ModalBody(id="delete-confirm-body"),
-                            dbc.ModalFooter(
-                                [
-                                    dbc.Button(
-                                        "Cancel", id="cancel-delete", color="secondary", className="me-2"),
-                                    dbc.Button(
-                                        "Delete", id="confirm-delete", color="danger"),
-                                ]
-                            ),
-                        ],
-                        id="delete-modal",
-                        is_open=False,
-                        centered=True,
-                    ),
 
-                    # Toasts
-                    html.Div(
+app.layout = dmc.MantineProvider(
+    dmc.Container(
+        [
+            dmc.NotificationContainer(id="notification-container"),
+            dcc.Store(id="docs-cache"),  # raw docs list
+            dcc.Store(id="refresh-ts", data=time.time()),  # timestamp to force refresh
+            dcc.Store(id="pending-delete-file"),
+            dcc.Store(id="preview-file"),
+
+            dmc.Tabs(
+                value="tab-docs",
+                children=[
+                    # Tabs list
+                    dmc.TabsList(
                         [
-                            dbc.Toast(
-                                id="toast-success",
-                                header="Success",
-                                is_open=False,
-                                dismissable=True,
-                                duration=4000,
-                                icon="success",
-                                children="",
-                                style={"position": "fixed", "top": 10,
-                                       "right": 10, "zIndex": 2000},
-                            ),
-                            dbc.Toast(
-                                id="toast-error",
-                                header="Error",
-                                is_open=False,
-                                dismissable=True,
-                                duration=6000,
-                                icon="danger",
-                                children="",
-                                style={"position": "fixed", "top": 10,
-                                       "right": 10, "zIndex": 2000},
-                            ),
+                            dmc.TabsTab("Documents", value="tab-docs"),
+                            dmc.TabsTab("Upload", value="tab-upload"),
                         ]
                     ),
-                ]),
-                dcc.Tab(label="Upload", value="tab-upload", children=[
-                    dbc.Row([
-                        dbc.Col(
+
+                    # Documents tab
+                    dmc.TabsPanel(
+                        children=[
+                            dmc.Grid(
+                                children=[
+                                    dmc.GridCol(
+                                        dmc.TextInput(
+                                            id="search-input",
+                                            placeholder="Search by file name…",
+                                        ),
+                                        span={"base": 12, "md": 6},
+                                    ),
+                                    dmc.GridCol(
+                                        dmc.Text(id="action-hint", c="dimmed"),
+                                        span={"base": 12, "md": 6},
+                                    ),
+                                ],
+                                gutter="sm",
+                            ),
+                            html.Div(id="docs-table", style={"overflowX": "auto", "marginTop": "8px"}),
+
+                            # Preview Modal
+                            dmc.Modal(
+                                id="preview-modal",
+                                opened=False,
+                                title="",
+                                size="xl",
+                                centered=True,
+                                closeOnEscape=False,
+                                closeOnClickOutside=False,
+                                children=[
+                                    dcc.Markdown(id="preview-content", style={"whiteSpace": "pre-wrap"}),
+                                    dmc.Group(
+                                        [
+                                            dmc.Button("Close", id="close-preview", variant="light", color="gray"),
+                                        ],
+                                        justify="flex-end",
+                                        mt="md",
+                                    ),
+                                ],
+                            ),
+
+                            # Delete confirm Modal
+                            dmc.Modal(
+                                id="delete-modal",
+                                opened=False,
+                                title="Confirm deletion",
+                                centered=True,
+                                children=[
+                                    dmc.Text(id="delete-confirm-body"),
+                                    dmc.Group(
+                                        [
+                                            dmc.Button("Cancel", id="cancel-delete", variant="light", color="gray"),
+                                            dmc.Button("Delete", id="confirm-delete", color="red"),
+                                        ],
+                                        justify="flex-end",
+                                        mt="md",
+                                    ),
+                                ],
+                            ),
+                        ],
+                        value="tab-docs",
+                    ),
+
+                    # Upload tab
+                    dmc.TabsPanel(
+                        children=[
                             dcc.Upload(
                                 id="upload",
-                                children=html.Div([
-                                    "Drag and drop or ", html.A("select files")
-                                ]),
+                                children=html.Div(["Drag and drop or ", html.A("select files")]),
                                 multiple=True,
                                 style={
                                     "width": "100%",
@@ -228,18 +256,15 @@ app.layout = dbc.Container(
                                     "textAlign": "center",
                                 },
                             ),
-                            width=12,
-                        ),
-                    ], className="my-3"),
-                    dbc.Button("Upload & Index",
-                               id="upload-btn", color="primary"),
-                    dcc.Loading(id="upload-loading", type="default",
-                                children=html.Div(id="upload-status", className="mt-3")),
-                ]),
-            ],
-        ),
-    ],
-    fluid=True,
+                            dmc.Button("Upload & Index", id="upload-btn", mt="md"),
+                            dcc.Loading(id="upload-loading", type="default", children=html.Div(id="upload-status", style={"marginTop": "12px"})),
+                        ],
+                        value="tab-upload",
+                    ),
+                ],
+            ),
+        ]
+    )
 )
 
 
@@ -265,101 +290,123 @@ def refresh_documents(_: Optional[Any]):
 
 
 @app.callback(
-    Output("docs-table", "data"),
+    Output("docs-table", "children"),
     Input("docs-cache", "data"),
     Input("search-input", "value"),
 )
 def filter_and_render_table(docs: List[Dict[str, Any]] | None, search: Optional[str]):
     docs = docs or []
+    # sort by uploaded_at desc (string ISO comparable)
+    try:
+        docs = sorted(docs, key=lambda d: d.get("uploaded_at_iso") or "", reverse=True)
+    except Exception:
+        pass
     if search:
         s = search.strip().lower()
         docs = [d for d in docs if s in (d.get("file_name", "").lower())]
-    return build_table_rows(docs)
+    rows = build_table_rows(docs)
+    return render_docs_table(rows)
 
 
 @app.callback(
-    Output("preview-modal", "is_open"),
-    Output("preview-title", "children"),
+    Output("preview-modal", "opened"),
+    Output("preview-modal", "title"),
     Output("preview-content", "children"),
-    Output("delete-modal", "is_open"),
-    Output("delete-confirm-body", "children"),
-    Output("pending-delete-file", "data"),
-    Input("docs-table", "active_cell"),
-    State("docs-table", "data"),
+    Input({"type": "view-doc", "file": dash.ALL}, "n_clicks"),
     Input("close-preview", "n_clicks"),
-    Input("cancel-delete", "n_clicks"),
     prevent_initial_call=True,
 )
-def handle_table_click(active_cell, table_data, close_preview, cancel_delete):
-    # Defaults
-    open_preview = dash.no_update
-    preview_title = dash.no_update
-    preview_content = dash.no_update
-    open_delete = dash.no_update
-    delete_body = dash.no_update
-    pending_file = dash.no_update
+def handle_preview(view_clicks, close_preview):
+    opened = dash.no_update
+    title = dash.no_update
+    content = dash.no_update
 
     ctx = dash.callback_context
     if not ctx.triggered:
-        return open_preview, preview_title, preview_content, open_delete, delete_body, pending_file
+        return opened, title, content
 
-    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+    trig_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    try:
+        trig = dash.callback_context.triggered_id
+    except Exception:
+        trig = None
 
-    if trig == "docs-table" and active_cell:
-        row = active_cell.get("row")
-        col = active_cell.get("column_id")
-        file_name = extract_file_from_row(table_data, row)
-        if not file_name:
-            return open_preview, preview_title, preview_content, open_delete, delete_body, pending_file
-        if col == "view":
-            # Load markdown, fallback to plaintext via MarkItDown
-            t0 = time.time()
-            try:
-                content = storage.read_markdown(file_name)
-                if content.startswith("Файл Markdown не найден") or content.startswith("Ошибка"):
-                    # Fallback to regenerate preview from source
-                    path = storage.CFG.data_path / file_name
-                    text = ""
-                    if path.exists():
-                        try:
-                            reader = MarkItDownReader()
-                            docs = reader.load_data(path)
-                            if docs:
-                                text = docs[0].text or ""
-                        except Exception:
-                            text = ""
-                    content = text or "(No preview available)"
-                log.info("document_previewed", action="document_previewed",
-                         filename=file_name, duration_ms=int((time.time()-t0)*1000))
-            except Exception as e:
-                log.error("document_preview_failed",
-                          filename=file_name, error=str(e))
-                content = f"Error loading preview: {e}"
+    if isinstance(trig, dict) and trig.get("type") == "view-doc":
+        # Only open on an actual click (avoid spurious triggers when table rerenders)
+        try:
+            if not view_clicks or not any(((c or 0) > 0) for c in view_clicks):
+                return opened, title, content
+        except Exception:
+            # If shape is unexpected, be conservative and do not open
+            return opened, title, content
+        file_name = trig.get("file")
+        t0 = time.time()
+        try:
+            md = storage.read_markdown(file_name)
+            if md.startswith("Файл Markdown не найден") or md.startswith("Ошибка"):
+                # Fallback to regenerate preview from source
+                path = storage.CFG.data_path / file_name
+                text = ""
+                if path.exists():
+                    try:
+                        reader = MarkItDownReader()
+                        docs = reader.load_data(path)
+                        if docs:
+                            text = docs[0].text or ""
+                    except Exception:
+                        text = ""
+                md = text or "(No preview available)"
+            log.info("document_previewed", action="document_previewed", filename=file_name, duration_ms=int((time.time()-t0)*1000))
+        except Exception as e:
+            log.error("document_preview_failed", filename=file_name, error=str(e))
+            md = f"Error loading preview: {e}"
+        opened = True
+        title = file_name
+        content = md
+    elif trig_id == "close-preview":
+        opened = False
 
-            open_preview = True
-            preview_title = file_name
-            preview_content = content
-
-        elif col == "delete":
-            open_delete = True
-            delete_body = html.Div(
-                [html.P(f"Delete '{file_name}'? This will remove the file and its vectors.")])
-            pending_file = file_name
-
-    elif trig == "close-preview":
-        open_preview = False
-    elif trig == "cancel-delete":
-        open_delete = False
-
-    return open_preview, preview_title, preview_content, open_delete, delete_body, pending_file
+    return opened, title, content
 
 
 @app.callback(
-    Output("delete-modal", "is_open", allow_duplicate=True),
-    Output("toast-success", "is_open"),
-    Output("toast-success", "children"),
-    Output("toast-error", "is_open"),
-    Output("toast-error", "children"),
+    Output("delete-modal", "opened"),
+    Output("delete-confirm-body", "children"),
+    Output("pending-delete-file", "data"),
+    Input({"type": "delete-doc", "file": dash.ALL}, "n_clicks"),
+    Input("cancel-delete", "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_delete_open(delete_clicks, cancel_delete):
+    opened = dash.no_update
+    body = dash.no_update
+    pending = dash.no_update
+
+    try:
+        trig = dash.callback_context.triggered_id
+    except Exception:
+        trig = None
+
+    if isinstance(trig, dict) and trig.get("type") == "delete-doc":
+        # Only open on an actual click (avoid spurious triggers when table rerenders)
+        try:
+            if not delete_clicks or not any(((c or 0) > 0) for c in delete_clicks):
+                return opened, body, pending
+        except Exception:
+            return opened, body, pending
+        file_name = trig.get("file")
+        opened = True
+        body = html.Div([html.P(f"Delete '{file_name}'? This will remove the file and its vectors.")])
+        pending = file_name
+    elif trig == "cancel-delete":
+        opened = False
+
+    return opened, body, pending
+
+
+@app.callback(
+    Output("delete-modal", "opened", allow_duplicate=True),
+    Output("notification-container", "sendNotifications"),
     Output("refresh-ts", "data", allow_duplicate=True),
     Input("confirm-delete", "n_clicks"),
     State("pending-delete-file", "data"),
@@ -367,7 +414,7 @@ def handle_table_click(active_cell, table_data, close_preview, cancel_delete):
 )
 def confirm_delete(n_clicks, file_name):
     if not n_clicks or not file_name:
-        return dash.no_update, False, dash.no_update, False, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
     t0 = time.time()
     try:
         res = storage.delete_document(file_name)
@@ -378,10 +425,28 @@ def confirm_delete(n_clicks, file_name):
             vectors_deleted=res.get("vectors_deleted"),
             duration_ms=int((time.time()-t0)*1000),
         )
-        return False, True, f"Deleted {file_name}", False, dash.no_update, time.time()
+        notif = [{
+            "id": f"del-{int(time.time()*1000)}",
+            "action": "show",
+            "title": "Success",
+            "message": f"Deleted {file_name}",
+            "color": "green",
+            "autoClose": 3000,
+            "withBorder": True,
+        }]
+        return False, notif, time.time()
     except Exception as e:
         log.error("document_delete_failed", filename=file_name, error=str(e))
-        return False, False, dash.no_update, True, f"Failed to delete {file_name}: {e}", dash.no_update
+        notif = [{
+            "id": f"err-{int(time.time()*1000)}",
+            "action": "show",
+            "title": "Error",
+            "message": f"Failed to delete {file_name}: {e}",
+            "color": "red",
+            "autoClose": 6000,
+            "withBorder": True,
+        }]
+        return False, notif, dash.no_update
 
 
 def _parse_upload(contents: str, filename: str) -> Tuple[Optional[io.BytesIO], str]:
@@ -397,10 +462,7 @@ def _parse_upload(contents: str, filename: str) -> Tuple[Optional[io.BytesIO], s
 
 @app.callback(
     Output("upload-status", "children"),
-    Output("toast-success", "is_open", allow_duplicate=True),
-    Output("toast-success", "children", allow_duplicate=True),
-    Output("toast-error", "is_open", allow_duplicate=True),
-    Output("toast-error", "children", allow_duplicate=True),
+    Output("notification-container", "sendNotifications", allow_duplicate=True),
     Output("refresh-ts", "data", allow_duplicate=True),
     Input("upload-btn", "n_clicks"),
     State("upload", "contents"),
@@ -409,9 +471,17 @@ def _parse_upload(contents: str, filename: str) -> Tuple[Optional[io.BytesIO], s
 )
 def handle_upload(n_clicks, contents_list, filenames):
     if not n_clicks:
-        return dash.no_update, False, dash.no_update, False, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
     if not contents_list or not filenames:
-        return html.Div("No files selected."), False, dash.no_update, False, dash.no_update, dash.no_update
+        notif = [{
+            "id": f"warn-{int(time.time()*1000)}",
+            "action": "show",
+            "title": "No files",
+            "message": "No files selected.",
+            "color": "yellow",
+            "autoClose": 3000,
+        }]
+        return html.Div("No files selected."), notif, dash.no_update
 
     successes = 0
     errors: List[str] = []
@@ -424,14 +494,12 @@ def handle_upload(n_clicks, contents_list, filenames):
             errors.append(f"Failed to parse {original_name}")
             continue
         try:
-            tmp = Path(storage.CFG.data_path) / \
-                f".__tmp__{int(time.time()*1000)}_{Path(original_name).name}"
+            tmp = Path(storage.CFG.data_path) / f".__tmp__{int(time.time()*1000)}_{Path(original_name).name}"
             tmp.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "wb") as f:
                 f.write(bio.getvalue())
             # Persist + index
-            storage.add_docx_to_store(
-                tmp, persist_original=True, target_file_name=Path(original_name).name)
+            storage.add_docx_to_store(tmp, persist_original=True, target_file_name=Path(original_name).name)
             # Remove temp file if copy succeeded
             try:
                 if tmp.exists():
@@ -444,23 +512,37 @@ def handle_upload(n_clicks, contents_list, filenames):
 
     duration_ms = int((time.time() - started_at) * 1000)
     if errors:
-        log.error("upload_failed", action="upload_failed",
-                  error=errors, duration_ms=duration_ms)
+        log.error("upload_failed", action="upload_failed", error=errors, duration_ms=duration_ms)
     else:
-        log.info("upload_finished", action="upload_finished",
-                 count=successes, duration_ms=duration_ms)
+        log.info("upload_finished", action="upload_finished", count=successes, duration_ms=duration_ms)
 
-    status_children = [
-        html.Div(f"Uploaded {successes} / {len(filenames)} files.")]
+    status_children = [html.Div(f"Uploaded {successes} / {len(filenames)} files.")]
     if errors:
         status_children.append(html.Ul([html.Li(e) for e in errors]))
 
+    notifications = []
+    if successes:
+        notifications.append({
+            "id": f"up-{int(time.time()*1000)}",
+            "action": "show",
+            "title": "Upload complete",
+            "message": f"Uploaded {successes} file(s)",
+            "color": "green",
+            "autoClose": 3000,
+        })
+    if errors:
+        notifications.append({
+            "id": f"up-err-{int(time.time()*1000)}",
+            "action": "show",
+            "title": "Upload errors",
+            "message": "\n".join(errors),
+            "color": "red",
+            "autoClose": 6000,
+        })
+
     return (
         status_children,
-        True if successes else False,
-        f"Uploaded {successes} file(s)",
-        True if errors else False,
-        "\n".join(errors) if errors else dash.no_update,
+        notifications if notifications else dash.no_update,
         time.time() if successes else dash.no_update,
     )
 
