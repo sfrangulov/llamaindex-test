@@ -44,22 +44,31 @@ def warmup():
         FS_TEMPLATE = f.read()
 
 
+SECTION_TITLES = [
+    'Лист изменений',
+    'Глоссарий',
+    'Глоссарий (опционально)',
+    'Предмет разработки',
+    'Релиз конфигурации',
+    'Дизайн объектов Системы',
+    'Описание общих алгоритмов',
+    'Описание интеграционных интерфейсов',
+    'Техническая реализация',
+    'Настройки системы, используемые разработкой',
+    'Тестовый сценарий',
+]
+
+
+def get_section_titles() -> list[str]:
+    return list(SECTION_TITLES)
+
+# Backwards/compat alias for external consumers expecting this name
+section_titles = SECTION_TITLES
+
+
 def split_by_sections_fs(text):
-    section_titles = [
-        'Лист изменений',
-        'Глоссарий',
-        'Глоссарий (опционально)',
-        'Предмет разработки',
-        'Релиз конфигурации',
-        'Дизайн объектов Системы',
-        'Описание общих алгоритмов',
-        'Описание интеграционных интерфейсов',
-        'Техническая реализация',
-        'Настройки системы, используемые разработкой',
-        'Тестовый сценарий',
-    ]
-    canonical = {t.lower(): t for t in section_titles}
-    alts = "|".join(map(re.escape, section_titles))
+    canonical = {t.lower(): t for t in SECTION_TITLES}
+    alts = "|".join(map(re.escape, SECTION_TITLES))
     pattern = rf'.?(?P<title>{alts})[*]*$'
     heading_re = re.compile(pattern, re.IGNORECASE |
                             re.VERBOSE | re.MULTILINE | re.DOTALL)
@@ -86,7 +95,8 @@ def get_fs(file_path: str) -> dict[str, str]:
 if __name__ == "__main__":
     warmup()
     stats = {}
-    for file in os.listdir("./data/markdown/"):
-        fs_sections = get_fs(f"./data/markdown/{file}")
+    files = os.listdir("./data/markdown/")
+    for fname in files:
+        fs_sections = get_fs(f"./data/markdown/{fname}")
         stats[len(fs_sections)] = stats.get(len(fs_sections), 0) + 1
-    log.info(f"FS sections stats", len=len(files), stats=stats)
+    log.info("FS sections stats", total=len(files), stats=stats)
