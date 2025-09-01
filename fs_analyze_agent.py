@@ -6,6 +6,8 @@ import json
 from typing import Any, Dict
 from llama_index.core import Settings
 from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.memory import Memory
+from llama_index.core.tools import FunctionTool
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -14,6 +16,10 @@ log = structlog.get_logger(__name__)
 DEV_STANDARDS = ""
 FS_QUESTIONS = ""
 FS_TEMPLATE = ""
+
+# Agent state (lazy-inited)
+AGENT: FunctionAgent | None = None
+MEMORY: Memory | None = None
 
 
 def split_by_sections_questions(text):
@@ -45,6 +51,102 @@ def warmup():
         FS_QUESTIONS = split_by_sections_questions(f.read())
     with open("./fs_analyze/fs_template.md", "r") as f:
         FS_TEMPLATE = f.read()
+    # Prebuild agent with memory for subsequent calls
+    _ensure_agent()
+
+
+def _ensure_agent() -> FunctionAgent:
+    """Initialize and cache a FunctionAgent with Memory.
+
+    Keeps a small set of helper tools to let the model query standards/Qs.
+    """
+    global AGENT, MEMORY
+    if AGENT is not None:
+        return AGENT
+    configure_settings()
+    # Bounded memory so context doesn't explode across many sections
+    try:
+        MEMORY = Memory.from_defaults(token_limit=4000)
+    except Exception:
+        MEMORY = None
+
+    # Provide tiny helper tools the agent can call if it wants more context
+    def _tool_get_questions(section: str) -> str:
+        try:
+            log.debug("Getting FS questions", section=section)
+            return (FS_QUESTIONS or {}).get(section, "")
+        except Exception:
+            return ""
+
+    def _tool_get_standards(_: str = "") -> str:
+        log.debug("Getting DEV standards")
+        return DEV_STANDARDS or ""
+    
+    def _tool_get_template(_: str = "") -> str:
+        log.debug("Getting FS template")
+        return FS_TEMPLATE or ""
+
+    tools: list[FunctionTool] = []
+    try:
+        tools = [
+            FunctionTool.from_defaults(fn=_tool_get_questions, name="get_fs_questions", description="Вернуть контрольные вопросы для указанного раздела ФС."),
+            FunctionTool.from_defaults(fn=_tool_get_standards, name="get_dev_standards", description="Вернуть стандарты разработки для справки при анализе."),
+            FunctionTool.from_defaults(fn=_tool_get_template, name="get_fs_template", description="Вернуть шаблон функциональной спецификации для справки при анализе."),
+        ]
+    except Exception:
+        tools = []
+
+    system_prompt = (
+        "Ты выступаешь в роли строгого ревьюера функциональных спецификаций (ФС). "
+        "Отвечай кратко, по делу и на русском. Когда проситcя вывод JSON — возвращай строго JSON без лишних пояснений."
+    )
+
+    try:
+        AGENT = FunctionAgent.from_tools(
+            tools=tools,
+            llm=Settings.llm,
+            memory=MEMORY,
+            verbose=False,
+            system_prompt=system_prompt,
+        )
+    except Exception:
+        # Fallback: build minimal agent without tools/memory
+        try:
+            AGENT = FunctionAgent.from_tools(tools=[], llm=Settings.llm)
+        except Exception:
+            AGENT = None
+    return AGENT
+
+
+def _agent_complete(prompt: str) -> str:
+    """Try to complete via FunctionAgent; fallback to raw LLM on failure."""
+    try:
+        agent = _ensure_agent()
+        if agent is not None:
+            # Try common call surfaces across versions
+            if hasattr(agent, "chat"):
+                res = agent.chat(prompt)  # may return str or obj
+                if isinstance(res, str):
+                    return res
+                # Try common attributes
+                txt = getattr(res, "message", None) or getattr(res, "response", None) or getattr(res, "text", None)
+                if hasattr(txt, "text"):
+                    txt = getattr(txt, "text", None)
+                if txt is not None:
+                    return str(txt)
+            if hasattr(agent, "run"):
+                res = agent.run(prompt)
+                txt = getattr(res, "output", None) or getattr(res, "text", None) or (str(res) if res is not None else None)
+                if txt is not None:
+                    return str(txt)
+    except Exception as e:
+        log.warning("agent_complete_failed", error=e)
+    # Hard fallback to raw LLM
+    try:
+        resp = Settings.llm.complete(prompt)
+        return getattr(resp, "text", "") or str(resp)
+    except Exception:
+        return ""
 
 
 SECTION_TITLES = [
@@ -160,8 +262,9 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
 
         prompt = (
             "Ты выступаешь в роли ревьюера функциональной спецификации (ФС).\n"
-            "Дан текст одного раздела ФС и список контрольных вопросов.\n"
+            "Дан текст одного раздела ФС, список контрольных вопросов а так же шаблон ФС.\n"
             "Для каждого вопроса ответь кратко на русском: 'Да', 'Нет' или 'Неясно', и добавь короткий комментарий (1-2 предложения).\n"
+            "Так же проверь раздел на соответствие шаблону ФС.\n",
             "Если обнаружены проблемы, перечисли их в виде пунктов.\n"
             "Дай итоговую общую оценку соответствия раздела требованиям одним из вариантов: 'полностью соответствует', 'частично соответствует', 'не соответствует'.\n"
             "Критерии: 'полностью соответствует' — все критичные вопросы закрыты ('Да') и нет существенных замечаний; 'частично соответствует' — есть неясности или мелкие замечания; 'не соответствует' — есть существенные пробелы, ответы 'Нет' по ключевым вопросам или раздел явно слабый.\n"
@@ -169,11 +272,16 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
             f"Раздел: {title}\n\n"
             "Текст раздела (Markdown):\n" + content + "\n\n"
             "Контрольные вопросы (Markdown):\n" + questions_md + "\n\n"
+            "Шаблон ФС можно получить инструментом get_fs_template.\n\n"
+            "Можешь при необходимости вызывать инструменты get_fs_questions и get_dev_standards.\n\n"
             "Требования к краткости: пиши очень кратко и по делу."
         )
         try:
-            resp = Settings.llm.complete(prompt)
-            data = _parse_json_loose(getattr(resp, "text", ""))
+            # resp = Settings.llm.complete(prompt)
+            # data = _parse_json_loose(getattr(resp, "text", ""))
+            text = _agent_complete(prompt)
+            data = _parse_json_loose(text)
+            log.debug("Analyzing FS section", section=title, prompt=prompt, data=data)
         except Exception as e:
             log.warning("Section analysis failed", section=title, error=e)
             data = {}
@@ -191,8 +299,12 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
 
         summary = data.get("summary") if isinstance(data, dict) else None
         if not summary:
-            summary = "OK" if ok and issues_count == 0 else (
-                f"⚠️ {issues_count} замечания" if issues_count else "Есть замечания")
+            if ok and issues_count == 0:
+                summary = "OK"
+            elif issues_count:
+                summary = f"⚠️ {issues_count} замечания"
+            else:
+                summary = "Есть замечания"
 
         # Normalize/add overall assessment
         overall = (data.get("overall_assessment")
