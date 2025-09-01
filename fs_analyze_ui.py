@@ -98,7 +98,7 @@ app.layout = dmc.MantineProvider(
         size="xl",
         px="md",
         children=[
-            dmc.Title("FS Analyzer", order=2),
+            dmc.Title("AI-анализ ФС", order=2),
             dmc.Space(h=10),
 
             dmc.Paper(
@@ -129,7 +129,7 @@ app.layout = dmc.MantineProvider(
                 radius="md",
                 children=[
                     dmc.Group([
-                        dmc.Text("Чат по текущей ФС", fw=600),
+                        dmc.Text("Вопрос/ответ по ФС", fw=600),
                     ], justify="space-between"),
                     dmc.Space(h=6),
                     dmc.Stack([
