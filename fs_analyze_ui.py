@@ -1,5 +1,5 @@
 from rag_engine import warmup
-from fs_analyze_agent import get_fs, get_section_titles
+from fs_analyze_agent import get_fs, get_section_titles, analyze_fs_sections
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from md_reader import MarkItDownReader
 from dotenv import load_dotenv
@@ -50,10 +50,14 @@ def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
 COL_SECTION = "Раздел"
 COL_STATUS = "Статус"
 COL_ACTIONS = "Действия"
+COL_ANALYSIS = "Анализ"
 
 
-def _build_sections_table(file_name: str) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-    """Return rows for DataTable and a dict of section->content (for modal)."""
+def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """Return rows for DataTable and a dict of section->content (for modal).
+
+    analysis: optional mapping section-> {summary, ok, issues_count, details_markdown}
+    """
     try:
         md = read_markdown(file_name)
         # read_markdown returns error message as text if not found; we still pass to split
@@ -69,10 +73,16 @@ def _build_sections_table(file_name: str) -> Tuple[List[Dict[str, Any]], Dict[st
         content = sections_from_md.get(title)
         found = bool(content)
         section_payload[title] = content or "Раздел не найден"
+        a_summary = None
+        if analysis and isinstance(analysis, dict):
+            a_data = analysis.get(title) or {}
+            if isinstance(a_data, dict):
+                a_summary = a_data.get("summary")
         rows.append({
             "#": i,
             COL_SECTION: title,
             COL_STATUS: "Найден" if found else "Не найден",
+            COL_ANALYSIS: a_summary or ("—"),
             COL_ACTIONS: "Просмотр" if found else "—",
         })
     return rows, section_payload
@@ -119,7 +129,12 @@ app.layout = dmc.MantineProvider(
                             dmc.Badge(id="current-file",
                                       color="blue", variant="light"),
                         ]),
-                        dmc.Button("Предпросмотр ФС", id="preview-full-md", variant="light"),
+                        dmc.Group([
+                            dmc.Button("Предпросмотр ФС",
+                                       id="preview-full-md", variant="light"),
+                            dmc.Button("Анализировать ФС", id="analyze-fs",
+                                       variant="filled", color="blue"),
+                        ], gap="sm"),
                     ], justify="space-between"),
                     dmc.Space(h=10),
                     dmc.Box(id="sections-table-wrap", style={"overflowX": "auto"},
@@ -159,7 +174,8 @@ app.layout = dmc.MantineProvider(
                         type="auto",
                         h=600,
                         children=[
-                            dcc.Markdown(id="full-md-content", link_target="_blank"),
+                            dcc.Markdown(id="full-md-content",
+                                         link_target="_blank"),
                         ],
                     )
                 ],
@@ -180,6 +196,7 @@ def _render_table(rows: List[Dict[str, Any]]):
         dmc.TableTh("#"),
         dmc.TableTh(COL_SECTION),
         dmc.TableTh(COL_STATUS),
+        dmc.TableTh(COL_ANALYSIS),
         dmc.TableTh(COL_ACTIONS),
     ]))
     body_rows = []
@@ -187,6 +204,14 @@ def _render_table(rows: List[Dict[str, Any]]):
         ok = (r.get(COL_STATUS) == "Найден")
         status = dmc.Badge("OK", color="green", variant="light") if ok else dmc.Badge(
             "Не найден", color="red", variant="light")
+        analysis_text = (r.get(COL_ANALYSIS) or "").strip()
+        if not analysis_text or analysis_text == "—":
+            analysis_cell = dmc.Text("—")
+        else:
+            green = analysis_text.lower().startswith(
+                "ok") or analysis_text.lower().startswith("ок")
+            analysis_cell = dmc.Badge(analysis_text, color=(
+                "green" if green else "orange"), variant="light")
         action = (
             dmc.Button(
                 "Просмотр",
@@ -199,6 +224,7 @@ def _render_table(rows: List[Dict[str, Any]]):
             dmc.TableTd(str(r.get("#", ""))),
             dmc.TableTd(r.get(COL_SECTION, "")),
             dmc.TableTd(status),
+            dmc.TableTd(analysis_cell),
             dmc.TableTd(action),
         ]))
     body = dmc.TableTbody(body_rows)
@@ -285,6 +311,37 @@ def on_preview_full(n_clicks, file_name):
         return True, file_name, md
     except Exception:
         return False, dash.no_update, dash.no_update
+
+
+@app.callback(
+    Output("sections-table-wrap", "children", allow_duplicate=True),
+    Output("sections-payload", "data", allow_duplicate=True),
+    Output("upload-status", "children", allow_duplicate=True),
+    Output("upload-status", "color", allow_duplicate=True),
+    Input("analyze-fs", "n_clicks"),
+    State("current-file-name", "data"),
+    prevent_initial_call=True,
+)
+def on_analyze_fs(n_clicks, file_name):
+    try:
+        if not n_clicks or not file_name:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        # Build sections and run analysis
+        try:
+            md = read_markdown(file_name)
+            sections_from_md = get_fs(str(
+                CFG.md_dir / f"{file_name}.md")) if md and not md.startswith("Файл Markdown не найден") else {}
+        except Exception:
+            sections_from_md = {}
+
+        analysis = analyze_fs_sections(sections_from_md)
+        rows, payload = _build_sections_table(file_name, analysis=analysis)
+        table = _render_table(rows)
+        return table, payload, "Анализ завершен", "blue"
+    except Exception as e:
+        log.exception("analyze_failed")
+        return dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
+
 
 if __name__ == "__main__":
     # Lazy init dirs

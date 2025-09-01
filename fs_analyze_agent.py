@@ -2,6 +2,9 @@ from rag_engine import configure_settings
 import asyncio
 import re
 import os
+import json
+from typing import Any, Dict
+from llama_index.core import Settings
 from llama_index.core.agent.workflow import FunctionAgent
 
 import structlog
@@ -90,6 +93,108 @@ def get_fs(file_path: str) -> dict[str, str]:
     with open(file_path, "r") as f:
         md = f.read()
         return split_by_sections_fs(md)
+
+
+def _parse_json_loose(text: str) -> Dict[str, Any]:
+    """Best-effort JSON parsing: strip code fences and trailing text."""
+    s = (text or "").strip()
+    # Remove Markdown code fences if present
+    if s.startswith("```"):
+        try:
+            s = s.strip().strip("`")
+            # After stripping fences, try to find first '{' and last '}'
+        except Exception:
+            pass
+    # Find JSON object boundaries
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        s = s[start:end+1]
+    try:
+        return json.loads(s)
+    except Exception:
+        return {}
+
+
+def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]]:
+    """Run LLM-based checklist analysis per FS section using FS_QUESTIONS.
+
+    Returns mapping: section_title -> {
+        'ok': bool,
+        'issues_count': int,
+        'summary': str,
+        'details_markdown': str,
+    }
+    """
+    # Ensure settings and questions are ready
+    if not isinstance(FS_QUESTIONS, dict) or not FS_QUESTIONS:
+        try:
+            warmup()
+        except Exception:
+            pass
+    configure_settings()
+
+    results: dict[str, Dict[str, Any]] = {}
+    for title in SECTION_TITLES:
+        content = (fs_sections or {}).get(title, "").strip()
+        questions_md = (FS_QUESTIONS or {}).get(title, "").strip()
+
+        # If no section text found, mark as missing
+        if not content:
+            details = (
+                f"### {title}\n\n"
+                f"Раздел отсутствует в документе. Проверьте, что он добавлен согласно шаблону ФС."
+            )
+            results[title] = {
+                "ok": False,
+                "issues_count": 1,
+                "summary": "Раздел отсутствует",
+                "details_markdown": details,
+            }
+            continue
+
+        if not questions_md:
+            questions_md = "* Вопросы для этого раздела не найдены в fs_questions.md. Выполните свободное ревью на соответствие здравому смыслу и стандартам разработки."
+
+        prompt = (
+            "Ты выступаешь в роли ревьюера функциональной спецификации (ФС).\n"
+            "Дан текст одного раздела ФС и список контрольных вопросов.\n"
+            "Для каждого вопроса ответь кратко на русском: 'Да', 'Нет' или 'Неясно', и добавь короткий комментарий (1-2 предложения).\n"
+            "Если обнаружены проблемы, перечисли их в виде пунктов.\n"
+            "Верни строго JSON без пояснений со следующими полями: ok (bool), issues_count (int), summary (string), details_markdown (string в Markdown).\n\n"
+            f"Раздел: {title}\n\n"
+            "Текст раздела (Markdown):\n" + content + "\n\n"
+            "Контрольные вопросы (Markdown):\n" + questions_md + "\n\n"
+            "Требования к краткости: пиши очень кратко и по делу."
+        )
+        try:
+            resp = Settings.llm.complete(prompt)
+            data = _parse_json_loose(getattr(resp, "text", ""))
+        except Exception as e:
+            log.warning("Section analysis failed", section=title, error=e)
+            data = {}
+
+        ok = bool(data.get("ok")) if isinstance(data, dict) else False
+        issues_count = int(data.get("issues_count", 0) or 0) if isinstance(data, dict) else 0
+        details_md = (data.get("details_markdown") or "(нет деталей)") if isinstance(data, dict) else "(анализ недоступен)"
+        if not data:
+            # Fallback heuristic: if content length is small, likely issues
+            ok = len(content) > 200
+            issues_count = 0 if ok else 1
+            details_md = f"### {title}\n\n(Не удалось выполнить автоматический анализ. Проверьте раздел вручную.)"
+
+        summary = data.get("summary") if isinstance(data, dict) else None
+        if not summary:
+            summary = "OK" if ok and issues_count == 0 else (f"⚠️ {issues_count} замечания" if issues_count else "Есть замечания")
+
+        results[title] = {
+            "ok": ok,
+            "issues_count": issues_count,
+            "summary": summary,
+            "details_markdown": details_md,
+        }
+
+    return results
 
 
 if __name__ == "__main__":
