@@ -122,14 +122,18 @@ app.layout = dmc.MantineProvider(
 
             dmc.Space(h=20),
 
-            dmc.Badge(id="current-file",
-                      color="blue", variant="light"),
+            dmc.Badge(
+                      id="current-file",
+                      color="blue",
+                      variant="light",
+                      style={"display": "none"}),
 
             dmc.Space(h=20),
 
             dmc.Tabs(
                 id="main-tabs",
                 value="preview",
+                style={"display": "none"},
                 children=[
                     dmc.TabsList(children=[
                         dmc.TabsTab("Предпросмотр ФС", value="preview"),
@@ -340,6 +344,18 @@ def on_upload(contents, filename):
     rows, payload = _build_sections_table(file_name)
     table = _render_table(rows)
     return msg, "green", file_name, file_name, table, payload, False
+
+
+@app.callback(
+    Output("current-file", "style"),
+    Output("main-tabs", "style"),
+    Input("current-file-name", "data"),
+)
+def toggle_visibility(current_file_name):
+    visible = bool(current_file_name)
+    style_visible = {"display": "block"}  # Mantine Badge uses flex
+    style_hidden = {"display": "none"}
+    return (style_visible if visible else style_hidden), (style_visible if visible else style_hidden)
 
 
 @app.callback(
