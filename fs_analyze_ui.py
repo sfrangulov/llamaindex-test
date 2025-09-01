@@ -189,6 +189,13 @@ app.layout = dmc.MantineProvider(
                                         dmc.Group([
                                             dmc.Button("Анализировать ФС", id="analyze-fs",
                                                        variant="filled", color="blue"),
+                                            dmc.Button(
+                                                "Выгрузить в Excel",
+                                                id="export-excel",
+                                                variant="outline",
+                                                color="teal",
+                                                disabled=True,
+                                            ),
                                         ], gap="sm"),
                                     ], justify="space-between"),
                                     dmc.Space(h=10),
@@ -201,7 +208,9 @@ app.layout = dmc.MantineProvider(
                                             children=[],
                                         ),
                                     ),
+                                    dcc.Download(id="download-excel"),
                                     dcc.Store(id="sections-payload"),
+                                    dcc.Store(id="analysis-result"),
                                 ],
                             ),
 
@@ -419,6 +428,7 @@ def update_full_preview(active_tab, file_name):
 @app.callback(
     Output("sections-table-wrap", "children", allow_duplicate=True),
     Output("sections-payload", "data", allow_duplicate=True),
+    Output("analysis-result", "data", allow_duplicate=True),
     Output("upload-status", "children", allow_duplicate=True),
     Output("upload-status", "color", allow_duplicate=True),
     Input("analyze-fs", "n_clicks"),
@@ -428,7 +438,7 @@ def update_full_preview(active_tab, file_name):
 def on_analyze_fs(n_clicks, file_name):
     try:
         if not n_clicks or not file_name:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         # Build sections and run analysis
         try:
             md = read_markdown(file_name)
@@ -440,10 +450,10 @@ def on_analyze_fs(n_clicks, file_name):
         analysis = analyze_fs_sections(sections_from_md)
         rows, payload = _build_sections_table(file_name, analysis=analysis)
         table = _render_table(rows)
-        return table, payload, "Анализ завершен", "blue"
+        return table, payload, analysis, "Анализ завершен", "blue"
     except Exception as e:
         log.exception("analyze_failed")
-        return dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
+        return dash.no_update, dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
 
 
 # Separate fast callback to toggle analyzing flag when user clicks analyze
@@ -549,6 +559,51 @@ def reflect_chat_button(is_chatting):
 def reset_chatting_flag(_children):
     # When answer is updated (success or error), reset busy flag
     return False
+
+
+# Enable/disable Export button based on analysis availability and analyzing state
+@app.callback(
+    Output("export-excel", "disabled"),
+    Input("analysis-result", "data"),
+    Input("analyzing-flag", "data"),
+)
+def toggle_export_button(analysis, analyzing):
+    has_data = isinstance(analysis, dict) and len(analysis) > 0
+    return bool(analyzing) or (not has_data)
+
+
+# Generate Excel download from the current analysis
+@app.callback(
+    Output("download-excel", "data"),
+    Input("export-excel", "n_clicks"),
+    State("current-file-name", "data"),
+    State("analysis-result", "data"),
+    prevent_initial_call=True,
+)
+def export_analysis_excel(n_clicks, file_name, analysis):
+    try:
+        if not n_clicks or not file_name or not isinstance(analysis, dict) or not analysis:
+            return dash.no_update
+        # Rebuild rows using the helper to keep consistency with the UI
+        rows, _ = _build_sections_table(file_name, analysis=analysis)
+        # Keep a concise set of columns
+        import pandas as _pd
+        import io as _io
+        from pathlib import Path as _Path
+
+        df = _pd.DataFrame(rows)
+        keep_cols = ['#', COL_SECTION, COL_STATUS, COL_OVERALL, COL_ANALYSIS]
+        df = df[[c for c in keep_cols if c in df.columns]]
+
+        buf = _io.BytesIO()
+        with _pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            df.to_excel(writer, sheet_name="Анализ", index=False)
+        buf.seek(0)
+        safe_name = _Path(file_name).stem or "analysis"
+        return dcc.send_bytes(buf.read(), filename=f"Анализ_{safe_name}.xlsx")
+    except Exception:
+        log.exception("export_excel_failed")
+        return dash.no_update
 
 
 if __name__ == "__main__":
