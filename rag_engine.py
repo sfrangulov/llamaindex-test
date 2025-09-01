@@ -201,18 +201,13 @@ class RagWorkflow(Workflow):
         idx = get_index()
         retriever = idx.as_retriever(similarity_top_k=TOP_K)
         nodes = await retriever.aretrieve(ev.rag_query)
-        # Optional: scope to a single file by metadata filter; fallback to unfiltered if empty
+        # Optional: scope to a single file by metadata filter; enforce strict scoping when requested
         if ev.file_name:
-            filtered = []
-            for sn in nodes:
-                try:
-                    if (sn.node.metadata or {}).get("file_name") == ev.file_name:
-                        filtered.append(sn)
-                except Exception:
-                    continue
-            if filtered:
-                nodes = filtered
-        log.debug("Retrieval done.", query=ev.rag_query, node_count=len(nodes))
+            before = len(nodes)
+            nodes = [sn for sn in nodes if (getattr(sn, "node", None) and (sn.node.metadata or {}).get("file_name") == ev.file_name)]
+            log.debug("Retrieval scoped to file.", query=ev.rag_query, file_name=ev.file_name, before=before, after=len(nodes))
+        else:
+            log.debug("Retrieval done.", query=ev.rag_query, node_count=len(nodes))
         return RetrievedEvent(query=ev.query, nodes=nodes, file_name=ev.file_name)
 
     @step
