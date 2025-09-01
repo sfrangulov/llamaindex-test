@@ -208,10 +208,19 @@ def _render_table(rows: List[Dict[str, Any]]):
         if not analysis_text or analysis_text == "—":
             analysis_cell = dmc.Text("—")
         else:
-            green = analysis_text.lower().startswith(
-                "ok") or analysis_text.lower().startswith("ок")
-            analysis_cell = dmc.Badge(analysis_text, color=(
-                "green" if green else "orange"), variant="light")
+            green = analysis_text.lower().startswith("ok") or analysis_text.lower().startswith("ок")
+            # Truncate badge label, show full text in tooltip for readability
+            trimmed = analysis_text
+            max_len = 40
+            if len(trimmed) > max_len:
+                trimmed = trimmed[: max_len - 1].rstrip() + "…"
+            analysis_cell = dmc.Tooltip(
+                label=dmc.Text(analysis_text, style={"whiteSpace": "pre-wrap"}),
+                multiline=True,
+                withArrow=True,
+                position="top-start",
+                children=dmc.Badge(trimmed, color=("green" if green else "orange"), variant="light"),
+            )
         action = (
             dmc.Button(
                 "Просмотр",
