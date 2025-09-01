@@ -107,7 +107,7 @@ app.layout = dmc.MantineProvider(
                 radius="md",
                 children=[
                     dmc.Group([
-                        dmc.Text("Загрузите ФС (.docx)", fw=500),
+                        dmc.Text("Загрузка ФС (.docx)", fw=500),
                         dcc.Upload(
                             id="upload-docx",
                             children=dmc.Button("Выбрать файл"),
@@ -158,6 +158,9 @@ app.layout = dmc.MantineProvider(
                 radius="md",
                 children=[
                     dmc.Group([
+                        dmc.Group([
+                            dmc.Text("Результаты анализа ФС", fw=600)
+                        ]),
                         dmc.Group([
                             dmc.Text("Файл:"),
                             dmc.Badge(id="current-file",

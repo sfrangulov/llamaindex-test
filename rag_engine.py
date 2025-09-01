@@ -24,6 +24,11 @@ import time
 import json
 from typing import Any, Dict, List
 from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core.vector_stores.types import (
+    MetadataFilters,
+    MetadataFilter,
+    FilterOperator,
+)
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -199,15 +204,16 @@ class RagWorkflow(Workflow):
     async def retrieve(self, ctx: Context, ev: ReformulatedRagQueryEvent) -> RetrievedEvent:
         """Retrieve candidate nodes using vector search with optional filters."""
         idx = get_index()
-        retriever = idx.as_retriever(similarity_top_k=TOP_K)
-        nodes = await retriever.aretrieve(ev.rag_query)
-        # Optional: scope to a single file by metadata filter; enforce strict scoping when requested
         if ev.file_name:
-            before = len(nodes)
-            nodes = [sn for sn in nodes if (getattr(sn, "node", None) and (sn.node.metadata or {}).get("file_name") == ev.file_name)]
-            log.debug("Retrieval scoped to file.", query=ev.rag_query, file_name=ev.file_name, before=before, after=len(nodes))
+            filters = MetadataFilters(
+                filters=[
+                    MetadataFilter(key="file_name", value=ev.file_name, operator=FilterOperator.EQ),
+                ]
+            )
+            retriever = idx.as_retriever(similarity_top_k=TOP_K, filters=filters)
         else:
-            log.debug("Retrieval done.", query=ev.rag_query, node_count=len(nodes))
+            retriever = idx.as_retriever(similarity_top_k=TOP_K)
+        nodes = await retriever.aretrieve(ev.rag_query)
         return RetrievedEvent(query=ev.query, nodes=nodes, file_name=ev.file_name)
 
     @step
