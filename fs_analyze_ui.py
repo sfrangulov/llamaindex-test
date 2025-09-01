@@ -518,7 +518,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         import json as _json
         payload = _json.loads(ans)
         answer = payload.get("answer") or ""
-        if not answer:
+        if not answer or answer == "Empty Response":
             return "Ответ не найден в контексте документов.", "yellow"
         # Render markdown in the alert body
         return dcc.Markdown(answer, link_target="_blank", className="fs-md"), "blue"
