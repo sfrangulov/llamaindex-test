@@ -1,4 +1,4 @@
-from rag_engine import warmup
+from rag_engine import warmup, search_documents
 from fs_analyze_agent import get_fs, get_section_titles, analyze_fs_sections
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from md_reader import MarkItDownReader
@@ -121,6 +121,27 @@ app.layout = dmc.MantineProvider(
             ),
 
             dmc.Space(h=20),
+
+            # Chat over current FS
+            dmc.Paper(
+                withBorder=True,
+                p="md",
+                radius="md",
+                children=[
+                    dmc.Group([
+                        dmc.Text("Чат по текущей ФС", fw=600),
+                    ], justify="space-between"),
+                    dmc.Space(h=6),
+                    dmc.Stack([
+                        dmc.Textarea(id="chat-question", placeholder="Задайте вопрос по текущей ФС…", autosize=True, minRows=2),
+                        dmc.Group([
+                            dmc.Button("Спросить", id="chat-ask", variant="filled", color="blue"),
+                            dmc.Checkbox(id="chat-scope-file", label="Искать только в этой ФС", checked=True),
+                        ], gap="sm"),
+                        dmc.Alert(id="chat-answer", title="Ответ", color="gray", children="", withCloseButton=False),
+                    ])
+                ],
+            ),
 
             dmc.Paper(
                 withBorder=True,
@@ -418,6 +439,38 @@ def reset_analyzing_on_status(status_text):
     if isinstance(status_text, str) and ("Анализ завершен" in status_text or "Ошибка анализа" in status_text):
         return False
     return dash.no_update
+
+
+@app.callback(
+    Output("chat-answer", "children"),
+    Output("chat-answer", "color"),
+    Input("chat-ask", "n_clicks"),
+    State("chat-question", "value"),
+    State("current-file-name", "data"),
+    State("chat-scope-file", "checked"),
+    prevent_initial_call=True,
+)
+def on_chat_ask(n_clicks, question, file_name, scope_file):
+    try:
+        if not n_clicks:
+            return dash.no_update, dash.no_update
+        q = (question or "").strip()
+        if not q:
+            return "Введите вопрос", "red"
+        # Optionally scope by file name
+        kwargs = {"file_name": file_name} if scope_file and file_name else {}
+        # Call RAG; run coroutine safely in this thread
+        import asyncio
+        ans = asyncio.run(search_documents(q, **kwargs))
+        import json as _json
+        payload = _json.loads(ans)
+        answer = payload.get("answer") or ""
+        if not answer:
+            return "Ответ не найден в контексте документов.", "yellow"
+        return answer, "blue"
+    except Exception as e:
+        log.exception("chat_failed")
+        return f"Ошибка: {e}", "red"
 
 
 if __name__ == "__main__":

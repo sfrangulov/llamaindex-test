@@ -127,25 +127,30 @@ def _build_sources(response) -> List[Dict[str, Any]]:
 
 class QueryEvent(Event):
     query: str
+    file_name: str | None
 
 
 class ReformulatedRagQueryEvent(Event):
     rag_query: str
     query: str
+    file_name: str | None
 
 
 class RetrievedEvent(Event):
     query: str
+    file_name: str | None
     nodes: List[Any]
 
 
 class RerankEvent(Event):
     query: str
+    file_name: str | None
     nodes: list[Any]
 
 
 class SynthEvent(Event):
     query: str
+    file_name: str | None
     response: Any
     nodes: List[Any]
 
@@ -161,13 +166,14 @@ class RagWorkflow(Workflow):
         """Entry point: read inputs from StartEvent and kick off retrieval."""
         data = getattr(ev, "input", None) or {}
         query = (data.get("query") or "").strip()
+        file_name = (data.get("file_name") or None)
         if not query:
             # immediately stop with empty result
             return StopEvent(result={"answer": "", "sources": []})
         # Ensure settings/index are ready before retrieval
         configure_settings()
         _ = get_index()
-        return QueryEvent(query=query)
+        return QueryEvent(query=query, file_name=file_name)
 
     @step
     async def reformulateRagQuery(self, ctx: Context, ev: QueryEvent) -> ReformulatedRagQueryEvent | StopEvent:
@@ -187,7 +193,7 @@ class RagWorkflow(Workflow):
                 rag_query = candidate or ev.query
         except Exception as e:
             log.warning("Query transform failed, using original", error=e)
-        return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query)
+        return ReformulatedRagQueryEvent(query=ev.query, rag_query=rag_query, file_name=ev.file_name)
 
     @step
     async def retrieve(self, ctx: Context, ev: ReformulatedRagQueryEvent) -> RetrievedEvent:
@@ -195,20 +201,31 @@ class RagWorkflow(Workflow):
         idx = get_index()
         retriever = idx.as_retriever(similarity_top_k=TOP_K)
         nodes = await retriever.aretrieve(ev.rag_query)
+        # Optional: scope to a single file by metadata filter; fallback to unfiltered if empty
+        if ev.file_name:
+            filtered = []
+            for sn in nodes:
+                try:
+                    if (sn.node.metadata or {}).get("file_name") == ev.file_name:
+                        filtered.append(sn)
+                except Exception:
+                    continue
+            if filtered:
+                nodes = filtered
         log.debug("Retrieval done.", query=ev.rag_query, node_count=len(nodes))
-        return RetrievedEvent(query=ev.query, nodes=nodes)
+        return RetrievedEvent(query=ev.query, nodes=nodes, file_name=ev.file_name)
 
     @step
     async def rerank(self, ctx: Context, ev: RetrievedEvent) -> RerankEvent:
         """Rerank the nodes."""
         if not RERANK_ENABLED or not ev.nodes or not Settings.ranker:
             log.debug("Reranking skipped.")
-            return RerankEvent(nodes=ev.nodes, query=ev.query)
+            return RerankEvent(nodes=ev.nodes, query=ev.query, file_name=ev.file_name)
         new_nodes = Settings.ranker.postprocess_nodes(
             ev.nodes, query_str=ev.query)
         log.debug("Reranking done.", query=ev.query, input_count=len(
             ev.nodes), output_count=len(new_nodes))
-        return RerankEvent(nodes=new_nodes, query=ev.query)
+        return RerankEvent(nodes=new_nodes, query=ev.query, file_name=ev.file_name)
 
     @step
     async def synthesize(self, ctx: Context, ev: RerankEvent) -> SynthEvent:
@@ -221,7 +238,7 @@ class RagWorkflow(Workflow):
             text_qa_template=text_qa_template,
         )
         response = await synthesizer.asynthesize(ev.query, ev.nodes)
-        return SynthEvent(query=ev.query, response=response, nodes=ev.nodes)
+        return SynthEvent(query=ev.query, file_name=ev.file_name, response=response, nodes=ev.nodes)
 
     @step
     def finalize(self, ctx: Context, ev: SynthEvent) -> StopEvent:
@@ -234,6 +251,7 @@ class RagWorkflow(Workflow):
 
 async def search_documents(
     query: str,
+    *, file_name: str | None = None,
 ) -> str:
     """Search and return JSON answer + sources using a Workflow pipeline."""
 
@@ -241,7 +259,7 @@ async def search_documents(
     # Run the workflow end-to-end
     wf = RagWorkflow()
     try:
-        result: Dict[str, Any] = await wf.run(input={"query": query})
+        result: Dict[str, Any] = await wf.run(input={"query": query, "file_name": file_name})
     except Exception as e:
         log.exception("Workflow failed, returning empty result: %s", e)
         result = {"answer": "", "sources": []}
