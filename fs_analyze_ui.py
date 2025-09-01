@@ -51,6 +51,7 @@ COL_SECTION = "Раздел"
 COL_STATUS = "Статус"
 COL_ACTIONS = "Действия"
 COL_ANALYSIS = "Анализ"
+COL_OVERALL = "Оценка"
 
 
 def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
@@ -74,15 +75,18 @@ def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None
         found = bool(content)
         section_payload[title] = content or "Раздел не найден"
         a_summary = None
+        a_overall = None
         if analysis and isinstance(analysis, dict):
             a_data = analysis.get(title) or {}
             if isinstance(a_data, dict):
                 a_summary = a_data.get("summary")
+                a_overall = a_data.get("overall_assessment")
         rows.append({
             "#": i,
             COL_SECTION: title,
             COL_STATUS: "Найден" if found else "Не найден",
             COL_ANALYSIS: a_summary or ("—"),
+            COL_OVERALL: a_overall or ("—"),
             COL_ACTIONS: "Просмотр" if found else "—",
         })
     return rows, section_payload
@@ -203,6 +207,7 @@ def _render_table(rows: List[Dict[str, Any]]):
         dmc.TableTh("#"),
         dmc.TableTh(COL_SECTION),
         dmc.TableTh(COL_STATUS),
+        dmc.TableTh(COL_OVERALL),
         dmc.TableTh(COL_ANALYSIS),
         dmc.TableTh(COL_ACTIONS),
     ]))
@@ -211,22 +216,38 @@ def _render_table(rows: List[Dict[str, Any]]):
         ok = (r.get(COL_STATUS) == "Найден")
         status = dmc.Badge("OK", color="green", variant="light") if ok else dmc.Badge(
             "Не найден", color="red", variant="light")
+        # Overall assessment badge
+        overall_text = (r.get(COL_OVERALL) or "").strip().lower()
+        if not overall_text or overall_text == "—":
+            overall_cell = dmc.Text("—")
+        else:
+            if overall_text.startswith("полностью"):
+                color = "green"
+            elif overall_text.startswith("частично"):
+                color = "orange"
+            else:
+                color = "red"
+            overall_cell = dmc.Badge(
+                r.get(COL_OVERALL), color=color, variant="light")
         analysis_text = (r.get(COL_ANALYSIS) or "").strip()
         if not analysis_text or analysis_text == "—":
             analysis_cell = dmc.Text("—")
         else:
-            green = analysis_text.lower().startswith("ok") or analysis_text.lower().startswith("ок")
+            green = analysis_text.lower().startswith(
+                "ok") or analysis_text.lower().startswith("ок")
             # Truncate badge label, show full text in tooltip for readability
             trimmed = analysis_text
             max_len = 40
             if len(trimmed) > max_len:
                 trimmed = trimmed[: max_len - 1].rstrip() + "…"
             analysis_cell = dmc.Tooltip(
-                label=dmc.Text(analysis_text, style={"whiteSpace": "pre-wrap"}),
+                label=dmc.Text(analysis_text, style={
+                               "whiteSpace": "pre-wrap"}),
                 multiline=True,
                 withArrow=True,
                 position="top-start",
-                children=dmc.Badge(trimmed, color=("green" if green else "orange"), variant="light"),
+                children=dmc.Badge(trimmed, color=(
+                    "green" if green else "orange"), variant="light"),
             )
         action = (
             dmc.Button(
@@ -240,6 +261,7 @@ def _render_table(rows: List[Dict[str, Any]]):
             dmc.TableTd(str(r.get("#", ""))),
             dmc.TableTd(r.get(COL_SECTION, "")),
             dmc.TableTd(status),
+            dmc.TableTd(overall_cell),
             dmc.TableTd(analysis_cell),
             dmc.TableTd(action),
         ]))

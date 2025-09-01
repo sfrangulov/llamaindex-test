@@ -65,6 +65,7 @@ SECTION_TITLES = [
 def get_section_titles() -> list[str]:
     return list(SECTION_TITLES)
 
+
 # Backwards/compat alias for external consumers expecting this name
 section_titles = SECTION_TITLES
 
@@ -124,6 +125,7 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
         'issues_count': int,
         'summary': str,
         'details_markdown': str,
+        'overall_assessment': str,  # один из: "полностью соответствует" | "частично соответствует" | "не соответствует"
     }
     """
     # Ensure settings and questions are ready
@@ -161,7 +163,9 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
             "Дан текст одного раздела ФС и список контрольных вопросов.\n"
             "Для каждого вопроса ответь кратко на русском: 'Да', 'Нет' или 'Неясно', и добавь короткий комментарий (1-2 предложения).\n"
             "Если обнаружены проблемы, перечисли их в виде пунктов.\n"
-            "Верни строго JSON без пояснений со следующими полями: ok (bool), issues_count (int), summary (string), details_markdown (string в Markdown).\n\n"
+            "Дай итоговую общую оценку соответствия раздела требованиям одним из вариантов: 'полностью соответствует', 'частично соответствует', 'не соответствует'.\n"
+            "Критерии: 'полностью соответствует' — все критичные вопросы закрыты ('Да') и нет существенных замечаний; 'частично соответствует' — есть неясности или мелкие замечания; 'не соответствует' — есть существенные пробелы, ответы 'Нет' по ключевым вопросам или раздел явно слабый.\n"
+            "Верни строго JSON без пояснений со следующими полями: ok (bool), issues_count (int), summary (string), details_markdown (string в Markdown), overall_assessment (string, одно из указанных значений).\n\n"
             f"Раздел: {title}\n\n"
             "Текст раздела (Markdown):\n" + content + "\n\n"
             "Контрольные вопросы (Markdown):\n" + questions_md + "\n\n"
@@ -175,8 +179,10 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
             data = {}
 
         ok = bool(data.get("ok")) if isinstance(data, dict) else False
-        issues_count = int(data.get("issues_count", 0) or 0) if isinstance(data, dict) else 0
-        details_md = (data.get("details_markdown") or "(нет деталей)") if isinstance(data, dict) else "(анализ недоступен)"
+        issues_count = int(data.get("issues_count", 0)
+                           or 0) if isinstance(data, dict) else 0
+        details_md = (data.get("details_markdown") or "(нет деталей)") if isinstance(
+            data, dict) else "(анализ недоступен)"
         if not data:
             # Fallback heuristic: if content length is small, likely issues
             ok = len(content) > 200
@@ -185,13 +191,31 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
 
         summary = data.get("summary") if isinstance(data, dict) else None
         if not summary:
-            summary = "OK" if ok and issues_count == 0 else (f"⚠️ {issues_count} замечания" if issues_count else "Есть замечания")
+            summary = "OK" if ok and issues_count == 0 else (
+                f"⚠️ {issues_count} замечания" if issues_count else "Есть замечания")
+
+        # Normalize/add overall assessment
+        overall = (data.get("overall_assessment")
+                   if isinstance(data, dict) else None) or ""
+        overall_norm = (overall or "").strip().lower()
+        if not overall_norm:
+            # Derive from ok/issues_count if model didn't return the field
+            if not content:
+                overall_norm = "не соответствует"
+            elif ok and issues_count == 0:
+                overall_norm = "полностью соответствует"
+            elif ok and issues_count > 0:
+                overall_norm = "частично соответствует"
+            else:
+                overall_norm = "частично соответствует" if len(
+                    content) > 200 else "не соответствует"
 
         results[title] = {
             "ok": ok,
             "issues_count": issues_count,
             "summary": summary,
             "details_markdown": details_md,
+            "overall_assessment": overall_norm,
         }
 
     return results
