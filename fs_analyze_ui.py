@@ -1,6 +1,7 @@
 from rag_engine import warmup
 from fs_analyze_agent import get_fs, get_section_titles
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
+from md_reader import MarkItDownReader
 from dotenv import load_dotenv
 import os
 import base64
@@ -113,10 +114,13 @@ app.layout = dmc.MantineProvider(
                 radius="md",
                 children=[
                     dmc.Group([
-                        dmc.Text("Файл:"),
-                        dmc.Badge(id="current-file",
-                                  color="blue", variant="light"),
-                    ]),
+                        dmc.Group([
+                            dmc.Text("Файл:"),
+                            dmc.Badge(id="current-file",
+                                      color="blue", variant="light"),
+                        ]),
+                        dmc.Button("Предпросмотр ФС", id="preview-full-md", variant="light"),
+                    ], justify="space-between"),
                     dmc.Space(h=10),
                     dmc.Box(id="sections-table-wrap", style={"overflowX": "auto"},
                             children=[],
@@ -137,6 +141,25 @@ app.layout = dmc.MantineProvider(
                         children=[
                             dcc.Markdown(
                                 id="modal-content", link_target="_blank")
+                        ],
+                    )
+                ],
+                size="xl",
+                centered=True,
+                opened=False,
+            ),
+
+            # Modal for full FS preview
+            dmc.Modal(
+                id="full-md-modal",
+                title=dmc.Text(id="full-md-title", fw=600),
+                children=[
+                    dmc.ScrollArea(
+                        offsetScrollbars=True,
+                        type="auto",
+                        h=600,
+                        children=[
+                            dcc.Markdown(id="full-md-content", link_target="_blank"),
                         ],
                     )
                 ],
@@ -228,6 +251,40 @@ def on_view(clicks, payload):
     except Exception:
         return False, dash.no_update, dash.no_update
 
+
+@app.callback(
+    Output("full-md-modal", "opened"),
+    Output("full-md-title", "children"),
+    Output("full-md-content", "children"),
+    Input("preview-full-md", "n_clicks"),
+    State("current-file-name", "data"),
+    prevent_initial_call=True,
+)
+def on_preview_full(n_clicks, file_name):
+    try:
+        if not n_clicks:
+            return False, dash.no_update, dash.no_update
+        if not file_name:
+            return False, dash.no_update, dash.no_update
+        md = read_markdown(file_name)
+        if md.startswith("Файл Markdown не найден") or md.startswith("Ошибка"):
+            # Fallback to plain text preview from source DOCX (no persistence)
+            try:
+                path = CFG.data_path / file_name
+                if path.exists():
+                    reader = MarkItDownReader()
+                    docs = reader.load_data(path)
+                    if docs:
+                        md = docs[0].text or "(Предпросмотр недоступен)"
+                    else:
+                        md = "(Предпросмотр недоступен)"
+                else:
+                    md = "(Markdown не найден, исходный файл отсутствует)"
+            except Exception:
+                md = "(Не удалось сформировать предпросмотр)"
+        return True, file_name, md
+    except Exception:
+        return False, dash.no_update, dash.no_update
 
 if __name__ == "__main__":
     # Lazy init dirs
