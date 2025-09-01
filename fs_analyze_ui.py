@@ -138,7 +138,16 @@ app.layout = dmc.MantineProvider(
                             dmc.Button("Спросить", id="chat-ask", variant="filled", color="blue"),
                             dmc.Checkbox(id="chat-scope-file", label="Искать только в этой ФС", checked=True),
                         ], gap="sm"),
-                        dmc.Alert(id="chat-answer", title="Ответ", color="gray", children="", withCloseButton=False),
+                        dcc.Loading(
+                            type="default",
+                            children=dmc.Alert(
+                                id="chat-answer",
+                                title="Ответ",
+                                color="gray",
+                                children="",
+                                withCloseButton=False,
+                            ),
+                        ),
                     ])
                 ],
             ),
@@ -217,6 +226,7 @@ app.layout = dmc.MantineProvider(
 
             dcc.Store(id="current-file-name"),
             dcc.Store(id="analyzing-flag", data=False),
+            dcc.Store(id="chatting-flag", data=False),
         ],
     )
 )
@@ -467,10 +477,46 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         answer = payload.get("answer") or ""
         if not answer:
             return "Ответ не найден в контексте документов.", "yellow"
-        return answer, "blue"
+        # Render markdown in the alert body
+        from dash import dcc as _dcc
+        return _dcc.Markdown(answer, link_target="_blank"), "blue"
     except Exception as e:
         log.exception("chat_failed")
         return f"Ошибка: {e}", "red"
+
+
+# Optional: show loading state on chat button
+@app.callback(
+    Output("chatting-flag", "data"),
+    Input("chat-ask", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_chatting_flag(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    return True
+
+
+@app.callback(
+    Output("chat-ask", "loading"),
+    Output("chat-ask", "disabled"),
+    Output("chat-ask", "children"),
+    Input("chatting-flag", "data"),
+)
+def reflect_chat_button(is_chatting):
+    busy = bool(is_chatting)
+    label = "Спросить…" if busy else "Спросить"
+    return busy, busy, label
+
+
+@app.callback(
+    Output("chatting-flag", "data", allow_duplicate=True),
+    Input("chat-answer", "children"),
+    prevent_initial_call=True,
+)
+def reset_chatting_flag(_children):
+    # When answer is updated (success or error), reset busy flag
+    return False
 
 
 if __name__ == "__main__":
