@@ -122,7 +122,11 @@ app.layout = dmc.MantineProvider(
 
             dmc.Space(h=20),
 
-            # Tabs for Q&A and Analysis
+            dmc.Badge(id="current-file",
+                      color="blue", variant="light"),
+
+            dmc.Space(h=20),
+
             dmc.Tabs(
                 id="main-tabs",
                 value="preview",
@@ -143,10 +147,13 @@ app.layout = dmc.MantineProvider(
                                 radius="md",
                                 children=[
                                     dmc.Stack([
-                                        dmc.Textarea(id="chat-question", placeholder="Задайте вопрос по текущей ФС…", autosize=True, minRows=2),
+                                        dmc.Textarea(
+                                            id="chat-question", placeholder="Задайте вопрос по ФС…", autosize=True, minRows=2),
                                         dmc.Group([
-                                            dmc.Button("Спросить", id="chat-ask", variant="filled", color="blue"),
-                                            dmc.Checkbox(id="chat-scope-file", label="Искать только в этой ФС", checked=True),
+                                            dmc.Button(
+                                                "Спросить", id="chat-ask", variant="filled", color="blue"),
+                                            dmc.Checkbox(
+                                                id="chat-scope-file", label="Искать только в этой ФС", checked=True),
                                         ], gap="sm"),
                                         dcc.Loading(
                                             type="default",
@@ -174,11 +181,6 @@ app.layout = dmc.MantineProvider(
                                 radius="md",
                                 children=[
                                     dmc.Group([
-                                        dmc.Group([
-                                            dmc.Text("Файл:"),
-                                            dmc.Badge(id="current-file",
-                                                      color="blue", variant="light"),
-                                        ]),
                                         dmc.Group([
                                             dmc.Button("Анализировать ФС", id="analyze-fs",
                                                        variant="filled", color="blue"),
@@ -229,14 +231,10 @@ app.layout = dmc.MantineProvider(
                                 p="md",
                                 radius="md",
                                 children=[
-                                    dmc.Text("Предпросмотр ФС", fw=600),
-                                    dmc.Space(h=10),
-                                    dmc.ScrollArea(
-                                        offsetScrollbars=True,
-                                        type="auto",
-                                        h=600,
+                                    dmc.Box(
                                         children=[
-                                            dcc.Markdown(id="full-md-content", link_target="_blank"),
+                                            dcc.Markdown(
+                                                id="full-md-content", link_target="_blank"),
                                         ],
                                     ),
                                 ],
