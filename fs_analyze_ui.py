@@ -245,7 +245,7 @@ def _render_table(rows: List[Dict[str, Any]]):
     body_rows = []
     for r in rows:
         ok = (r.get(COL_STATUS) == "Найден")
-        status = dmc.Badge("OK", color="green", variant="light") if ok else dmc.Badge(
+        status = dmc.Badge("Найден", color="green", variant="light") if ok else dmc.Badge(
             "Не найден", color="red", variant="light")
         # Overall assessment badge
         overall_text = (r.get(COL_OVERALL) or "").strip().lower()
