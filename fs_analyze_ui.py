@@ -214,6 +214,9 @@ def on_upload(contents, filename):
 )
 def on_view(clicks, payload):
 	try:
+		# If no actual clicks yet (first render or after upload), do nothing
+		if not clicks or all(((c or 0) <= 0) for c in clicks):
+			return False, dash.no_update, dash.no_update
 		ctx = callback_context
 		tid = getattr(ctx, "triggered_id", None)
 		if not tid or isinstance(tid, str):
