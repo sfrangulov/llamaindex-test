@@ -146,7 +146,7 @@ app.layout = dmc.MantineProvider(
 						type="auto",
 						h=500,
 						children=[
-							dmc.Code(id="modal-content", block=True, style={"whiteSpace": "pre-wrap", "fontFamily": "monospace"})
+							dcc.Markdown(id="modal-content", link_target="_blank")
 						],
 					)
 				],
