@@ -86,7 +86,7 @@ def split_by_sections_fs(text):
         if not chunk:
             continue
         key = canonical.get(m.group('title').lower(), m.group('title').strip())
-        result[key] = chunk
+        result[key] = '# ' + chunk
     return result
 
 
