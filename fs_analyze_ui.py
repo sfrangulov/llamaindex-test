@@ -3,15 +3,15 @@ from fs_analyze_agent import get_fs, get_section_titles, analyze_fs_sections
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from md_reader import MarkItDownReader
 from dotenv import load_dotenv
+import json
 import os
 import base64
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import dash
-from dash import Dash, html, dcc, Input, Output, State, callback_context, ALL
+from dash import Dash, dcc, Input, Output, State, callback_context, ALL
 import dash_mantine_components as dmc
-import plotly.io as pio
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -23,6 +23,7 @@ load_dotenv()
 external_stylesheets: List[str] = []
 app: Dash = dash.Dash(__name__, title="AI-анализ ФС",
                       external_stylesheets=external_stylesheets)
+app.config.suppress_callback_exceptions = True
 server = app.server
 
 
@@ -52,6 +53,7 @@ COL_SECTION = "Раздел"
 COL_STATUS = "Статус"
 COL_ACTIONS = "Действия"
 COL_ANALYSIS = "Анализ"
+COL_DETAILS_MARKDOWN = "Детали"
 COL_OVERALL = "Оценка"
 
 
@@ -77,17 +79,20 @@ def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None
         section_payload[title] = content or "Раздел не найден"
         a_summary = None
         a_overall = None
+        a_details_markdown = None
         if analysis and isinstance(analysis, dict):
             a_data = analysis.get(title) or {}
             if isinstance(a_data, dict):
                 a_summary = a_data.get("summary")
                 a_overall = a_data.get("overall_assessment")
+                a_details_markdown = a_data.get("details_markdown")
         rows.append({
             "#": i,
             COL_SECTION: title,
             COL_STATUS: "Найден" if found else "Не найден",
             COL_ANALYSIS: a_summary or ("—"),
             COL_OVERALL: a_overall or ("—"),
+            COL_DETAILS_MARKDOWN: a_details_markdown or ("—"),
             COL_ACTIONS: "Просмотр" if found else "—",
         })
     return rows, section_payload
@@ -233,6 +238,25 @@ app.layout = dmc.MantineProvider(
                                 centered=True,
                                 opened=False,
                             ),
+
+                            # Modal for analysis details
+                            dmc.Modal(
+                                id="analysis-modal",
+                                title=dmc.Text(id="analysis-modal-title", fw=600),
+                                children=[
+                                    dmc.ScrollArea(
+                                        offsetScrollbars=True,
+                                        type="auto",
+                                        h=500,
+                                        children=[
+                                            dcc.Markdown(id="analysis-modal-content", link_target="_blank", className="fs-md")
+                                        ],
+                                    )
+                                ],
+                                size="xl",
+                                centered=True,
+                                opened=False,
+                            ),
                         ],
                     ),
 
@@ -274,6 +298,7 @@ def _render_table(rows: List[Dict[str, Any]]):
         dmc.TableTh(COL_STATUS),
         dmc.TableTh(COL_OVERALL),
         dmc.TableTh(COL_ANALYSIS),
+        # dmc.TableTh(COL_DETAILS_MARKDOWN),
         dmc.TableTh(COL_ACTIONS),
     ]))
     body_rows = []
@@ -298,21 +323,18 @@ def _render_table(rows: List[Dict[str, Any]]):
         if not analysis_text or analysis_text == "—":
             analysis_cell = dmc.Text("—")
         else:
-            green = analysis_text.lower().startswith(
-                "ok") or analysis_text.lower().startswith("ок")
-            # Truncate badge label, show full text in tooltip for readability
+            green = analysis_text.lower().startswith("ok") or analysis_text.lower().startswith("ок")
+            # Truncate label, full text will be in modal
             trimmed = analysis_text
             max_len = 40
             if len(trimmed) > max_len:
                 trimmed = trimmed[: max_len - 1].rstrip() + "…"
-            analysis_cell = dmc.Tooltip(
-                label=dmc.Text(analysis_text, style={
-                               "whiteSpace": "pre-wrap"}),
-                multiline=True,
-                withArrow=True,
-                position="top-start",
-                children=dmc.Badge(trimmed, color=(
-                    "green" if green else "orange"), variant="light"),
+            analysis_cell = dmc.Button(
+                trimmed,
+                variant="light",
+                color=("green" if green else "orange"),
+                size="xs",
+                id={"type": "analysis-btn", "section": r.get(COL_SECTION)},
             )
         action = (
             dmc.Button(
@@ -328,10 +350,14 @@ def _render_table(rows: List[Dict[str, Any]]):
             dmc.TableTd(status),
             dmc.TableTd(overall_cell),
             dmc.TableTd(analysis_cell),
+            # dmc.TableTd(dcc.Markdown(details_markdown) if details_markdown and details_markdown != "—" else "—"),
             dmc.TableTd(action),
         ]))
     body = dmc.TableTbody(body_rows)
     return dmc.Table(highlightOnHover=True, striped=True, verticalSpacing="sm", horizontalSpacing="md", children=[header, body])
+
+
+"""Duplicate standalone definition of analysis modal removed: it's now inline in layout."""
 
 
 @app.callback(
@@ -383,13 +409,68 @@ def on_view(clicks, payload):
             return False, dash.no_update, dash.no_update
         ctx = callback_context
         tid = getattr(ctx, "triggered_id", None)
-        if not tid or isinstance(tid, str):
-            return False, dash.no_update, dash.no_update
-        section_title = tid.get("section")
+        section_title = None
+        if isinstance(tid, dict):
+            section_title = tid.get("section")
+        else:
+            trg = getattr(ctx, "triggered", []) or []
+            if trg:
+                prop_id = trg[0].get("prop_id", "")
+                comp_id = prop_id.split(".")[0]
+                if comp_id.startswith("{"):
+                    try:
+                        d = json.loads(comp_id)
+                        section_title = d.get("section")
+                    except Exception:
+                        section_title = None
         if not section_title:
             return False, dash.no_update, dash.no_update
         content = (payload or {}).get(section_title) or "Раздел не найден"
         return True, section_title, content
+    except Exception:
+        return False, dash.no_update, dash.no_update
+
+
+@app.callback(
+    Output("analysis-modal", "opened"),
+    Output("analysis-modal-title", "children"),
+    Output("analysis-modal-content", "children"),
+    Input({"type": "analysis-btn", "section": ALL}, "n_clicks"),
+    State("analysis-result", "data"),
+    prevent_initial_call=True,
+)
+def on_analysis_click(clicks, analysis):
+    try:
+        if not clicks or all(((c or 0) <= 0) for c in clicks):
+            return False, dash.no_update, dash.no_update
+        ctx = callback_context
+        tid = getattr(ctx, "triggered_id", None)
+        section = None
+        if isinstance(tid, dict):
+            section = tid.get("section")
+        else:
+            trg = getattr(ctx, "triggered", []) or []
+            if trg:
+                prop_id = trg[0].get("prop_id", "")
+                comp_id = prop_id.split(".")[0]
+                if comp_id.startswith("{"):
+                    try:
+                        d = json.loads(comp_id)
+                        section = d.get("section")
+                    except Exception:
+                        section = None
+        if not section:
+            return False, dash.no_update, dash.no_update
+        details = ""
+        if isinstance(analysis, dict):
+            sec = analysis.get(section) or {}
+            if isinstance(sec, dict):
+                # Prefer detailed markdown; fallback to summary
+                details = (sec.get("details_markdown") or sec.get("summary") or "").strip()
+        if not details:
+            details = "(Детали анализа отсутствуют)"
+        # Return plain markdown string; layout already contains dcc.Markdown component
+        return True, section, details
     except Exception:
         return False, dash.no_update, dash.no_update
 
@@ -515,8 +596,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         # Call RAG; run coroutine safely in this thread
         import asyncio
         ans = asyncio.run(search_documents(q, **kwargs))
-        import json as _json
-        payload = _json.loads(ans)
+        payload = json.loads(ans)
         answer = payload.get("answer") or ""
         if not answer or answer == "Empty Response":
             return "Ответ не найден в контексте документов.", "yellow"
