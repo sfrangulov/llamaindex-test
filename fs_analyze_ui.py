@@ -137,9 +137,15 @@ app.layout = dmc.MantineProvider(
                         ], gap="sm"),
                     ], justify="space-between"),
                     dmc.Space(h=10),
-                    dmc.Box(id="sections-table-wrap", style={"overflowX": "auto"},
+                    dcc.Loading(
+                        id="analysis-loading",
+                        type="default",
+                        children=dmc.Box(
+                            id="sections-table-wrap",
+                            style={"overflowX": "auto"},
                             children=[],
-                            ),
+                        ),
+                    ),
                     dcc.Store(id="sections-payload"),
                 ],
             ),
@@ -185,6 +191,7 @@ app.layout = dmc.MantineProvider(
             ),
 
             dcc.Store(id="current-file-name"),
+            dcc.Store(id="analyzing-flag", data=False),
         ],
     )
 )
@@ -247,6 +254,7 @@ def _render_table(rows: List[Dict[str, Any]]):
     Output("current-file-name", "data"),
     Output("sections-table-wrap", "children"),
     Output("sections-payload", "data"),
+    Output("analyzing-flag", "data", allow_duplicate=True),
     Input("upload-docx", "contents"),
     State("upload-docx", "filename"),
     prevent_initial_call=True,
@@ -254,11 +262,11 @@ def _render_table(rows: List[Dict[str, Any]]):
 def on_upload(contents, filename):
     ok, msg = _parse_upload(contents, filename)
     if not ok:
-        return msg, "red", "", None, [], {}
+        return msg, "red", "", None, [], {}, dash.no_update
     file_name = Path(filename).name
     rows, payload = _build_sections_table(file_name)
     table = _render_table(rows)
-    return msg, "green", file_name, file_name, table, payload
+    return msg, "green", file_name, file_name, table, payload, False
 
 
 @app.callback(
@@ -350,6 +358,44 @@ def on_analyze_fs(n_clicks, file_name):
     except Exception as e:
         log.exception("analyze_failed")
         return dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
+
+
+# Separate fast callback to toggle analyzing flag when user clicks analyze
+@app.callback(
+    Output("analyzing-flag", "data"),
+    Input("analyze-fs", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_analyzing_flag(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    return True
+
+
+# Drive analyze button UI from analyzing flag
+@app.callback(
+    Output("analyze-fs", "loading"),
+    Output("analyze-fs", "disabled"),
+    Output("analyze-fs", "children"),
+    Input("analyzing-flag", "data"),
+)
+def reflect_button(analyzing):
+    analyzing = bool(analyzing)
+    label = "Анализ…" if analyzing else "Анализировать ФС"
+    return analyzing, analyzing, label
+
+
+# Reset analyzing flag when analysis completes (based on status text change)
+@app.callback(
+    Output("analyzing-flag", "data", allow_duplicate=True),
+    Input("upload-status", "children"),
+    prevent_initial_call=True,
+)
+def reset_analyzing_on_status(status_text):
+    # When analysis completes or errors, upload-status is updated
+    if isinstance(status_text, str) and ("Анализ завершен" in status_text or "Ошибка анализа" in status_text):
+        return False
+    return dash.no_update
 
 
 if __name__ == "__main__":
