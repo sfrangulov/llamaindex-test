@@ -124,9 +124,11 @@ app.layout = dmc.MantineProvider(
 
             # Tabs for Q&A and Analysis
             dmc.Tabs(
-                value="analysis",
+                id="main-tabs",
+                value="preview",
                 children=[
                     dmc.TabsList(children=[
+                        dmc.TabsTab("Предпросмотр ФС", value="preview"),
                         dmc.TabsTab("Анализа ФС", value="analysis"),
                         dmc.TabsTab("Вопрос/ответ", value="qa"),
                     ]),
@@ -178,8 +180,6 @@ app.layout = dmc.MantineProvider(
                                                       color="blue", variant="light"),
                                         ]),
                                         dmc.Group([
-                                            dmc.Button("Предпросмотр ФС",
-                                                       id="preview-full-md", variant="light"),
                                             dmc.Button("Анализировать ФС", id="analyze-fs",
                                                        variant="filled", color="blue"),
                                         ], gap="sm"),
@@ -198,7 +198,7 @@ app.layout = dmc.MantineProvider(
                                 ],
                             ),
 
-                            # Modal for preview
+                            # Modal for section preview (оставляем для разделов)
                             dmc.Modal(
                                 id="section-modal",
                                 title=dmc.Text(id="modal-title", fw=600),
@@ -217,25 +217,29 @@ app.layout = dmc.MantineProvider(
                                 centered=True,
                                 opened=False,
                             ),
+                        ],
+                    ),
 
-                            # Modal for full FS preview
-                            dmc.Modal(
-                                id="full-md-modal",
-                                title=dmc.Text(id="full-md-title", fw=600),
+                    # Inline Full Preview Tab
+                    dmc.TabsPanel(
+                        value="preview",
+                        children=[
+                            dmc.Paper(
+                                withBorder=True,
+                                p="md",
+                                radius="md",
                                 children=[
+                                    dmc.Text("Предпросмотр ФС", fw=600),
+                                    dmc.Space(h=10),
                                     dmc.ScrollArea(
                                         offsetScrollbars=True,
                                         type="auto",
                                         h=600,
                                         children=[
-                                            dcc.Markdown(id="full-md-content",
-                                                         link_target="_blank"),
+                                            dcc.Markdown(id="full-md-content", link_target="_blank"),
                                         ],
-                                    )
+                                    ),
                                 ],
-                                size="xl",
-                                centered=True,
-                                opened=False,
                             ),
                         ],
                     ),
@@ -367,21 +371,17 @@ def on_view(clicks, payload):
 
 
 @app.callback(
-    Output("full-md-modal", "opened"),
-    Output("full-md-title", "children"),
     Output("full-md-content", "children"),
-    Input("preview-full-md", "n_clicks"),
-    State("current-file-name", "data"),
-    prevent_initial_call=True,
+    Input("main-tabs", "value"),
+    Input("current-file-name", "data"),
 )
-def on_preview_full(n_clicks, file_name):
+def update_full_preview(active_tab, file_name):
     try:
-        if not n_clicks:
-            return False, dash.no_update, dash.no_update
-        if not file_name:
-            return False, dash.no_update, dash.no_update
+        # Render preview only when preview tab is active and a file is selected
+        if active_tab != "preview" or not file_name:
+            return dash.no_update
         md = read_markdown(file_name)
-        if md.startswith("Файл Markdown не найден") or md.startswith("Ошибка"):
+        if isinstance(md, str) and (md.startswith("Файл Markdown не найден") or md.startswith("Ошибка")):
             # Fallback to plain text preview from source DOCX (no persistence)
             try:
                 path = CFG.data_path / file_name
@@ -396,9 +396,9 @@ def on_preview_full(n_clicks, file_name):
                     md = "(Markdown не найден, исходный файл отсутствует)"
             except Exception:
                 md = "(Не удалось сформировать предпросмотр)"
-        return True, file_name, md
+        return md
     except Exception:
-        return False, dash.no_update, dash.no_update
+        return dash.no_update
 
 
 @app.callback(
