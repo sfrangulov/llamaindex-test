@@ -11,4 +11,5 @@
 }
 .fs-md thead th {
   background-color: #f8f9fa;
+  display: none;
 }
