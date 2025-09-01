@@ -21,7 +21,8 @@ load_dotenv()
 
 # --------- App setup ---------
 external_stylesheets: List[str] = []
-app: Dash = dash.Dash(__name__, external_stylesheets=external_stylesheets)
+app: Dash = dash.Dash(__name__, title="AI-анализ ФС",
+                      external_stylesheets=external_stylesheets)
 server = app.server
 
 
@@ -123,10 +124,10 @@ app.layout = dmc.MantineProvider(
             dmc.Space(h=20),
 
             dmc.Badge(
-                      id="current-file",
-                      color="blue",
-                      variant="light",
-                      style={"display": "none"}),
+                id="current-file",
+                color="blue",
+                variant="light",
+                style={"display": "none"}),
 
             dmc.Space(h=20),
 
@@ -238,7 +239,7 @@ app.layout = dmc.MantineProvider(
                                     dmc.Box(
                                         children=[
                                             dcc.Markdown(
-                                                    id="full-md-content", link_target="_blank", className="fs-md"),
+                                                id="full-md-content", link_target="_blank", className="fs-md"),
                                         ],
                                     ),
                                 ],
