@@ -215,7 +215,7 @@ app.layout = dmc.MantineProvider(
                                         h=500,
                                         children=[
                                             dcc.Markdown(
-                                                id="modal-content", link_target="_blank")
+                                                id="modal-content", link_target="_blank", className="fs-md")
                                         ],
                                     )
                                 ],
@@ -238,7 +238,7 @@ app.layout = dmc.MantineProvider(
                                     dmc.Box(
                                         children=[
                                             dcc.Markdown(
-                                                id="full-md-content", link_target="_blank"),
+                                                    id="full-md-content", link_target="_blank", className="fs-md"),
                                         ],
                                     ),
                                 ],
@@ -510,8 +510,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         if not answer:
             return "Ответ не найден в контексте документов.", "yellow"
         # Render markdown in the alert body
-        from dash import dcc as _dcc
-        return _dcc.Markdown(answer, link_target="_blank"), "blue"
+        return dcc.Markdown(answer, link_target="_blank", className="fs-md"), "blue"
     except Exception as e:
         log.exception("chat_failed")
         return f"Ошибка: {e}", "red"

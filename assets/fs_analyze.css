@@ -1,0 +1,14 @@
+/* Scoped Markdown table borders for fs_analyze UI only */
+.fs-md table {
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid #dee2e6;
+}
+.fs-md th,
+.fs-md td {
+  border: 1px solid #dee2e6;
+  padding: 6px 8px;
+}
+.fs-md thead th {
+  background-color: #f8f9fa;
+}
