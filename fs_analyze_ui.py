@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import dash
-from dash import Dash, html, dcc, Input, Output, State, dash_table, callback_context
+from dash import Dash, html, dcc, Input, Output, State, callback_context, ALL
 import dash_mantine_components as dmc
 import plotly.io as pio
 
@@ -117,20 +117,12 @@ app.layout = dmc.MantineProvider(
 						dmc.Badge(id="current-file", color="blue", variant="light"),
 					]),
 					dmc.Space(h=10),
-					dash_table.DataTable(
-						id="sections-table",
-						columns=[
-							{"name": "#", "id": "#", "type": "numeric"},
-							{"name": COL_SECTION, "id": COL_SECTION},
-							{"name": COL_STATUS, "id": COL_STATUS},
-							{"name": COL_ACTIONS, "id": COL_ACTIONS},
-						],
-						data=[],
-						style_table={"overflowX": "auto"},
-						style_cell={"textAlign": "left", "padding": "6px"},
-						style_header={"fontWeight": "bold"},
-						row_selectable=False,
-						page_size=20,
+					dmc.ScrollArea(
+						id="sections-table-wrap",
+						type="auto",
+						offsetScrollbars=True,
+						style={"maxHeight": 420},
+						children=[],
 					),
 					dcc.Store(id="sections-payload"),
 				],
@@ -162,12 +154,41 @@ app.layout = dmc.MantineProvider(
 
 
 # --------- Callbacks ---------
+def _render_table(rows: List[Dict[str, Any]]):
+	header = dmc.TableThead(dmc.TableTr([
+		dmc.TableTh("#"),
+		dmc.TableTh(COL_SECTION),
+		dmc.TableTh(COL_STATUS),
+		dmc.TableTh(COL_ACTIONS),
+	]))
+	body_rows = []
+	for r in rows:
+		ok = (r.get(COL_STATUS) == "OK")
+		status = dmc.Badge("OK", color="green", variant="light") if ok else dmc.Badge("Не найден", color="red", variant="light")
+		action = (
+			dmc.Button(
+				"Просмотр",
+				variant="light",
+				size="xs",
+				id={"type": "view-btn", "section": r.get(COL_SECTION)},
+			) if ok else dmc.Text("—")
+		)
+		body_rows.append(dmc.TableTr([
+			dmc.TableTd(str(r.get("#", ""))),
+			dmc.TableTd(r.get(COL_SECTION, "")),
+			dmc.TableTd(status),
+			dmc.TableTd(action),
+		]))
+	body = dmc.TableTbody(body_rows)
+	return dmc.Table(highlightOnHover=True, striped=True, verticalSpacing="sm", horizontalSpacing="md", children=[header, body])
+
+
 @app.callback(
 	Output("upload-status", "children"),
 	Output("upload-status", "color"),
 	Output("current-file", "children"),
 	Output("current-file-name", "data"),
-	Output("sections-table", "data"),
+	Output("sections-table-wrap", "children"),
 	Output("sections-payload", "data"),
 	Input("upload-docx", "contents"),
 	State("upload-docx", "filename"),
@@ -179,27 +200,27 @@ def on_upload(contents, filename):
 		return msg, "red", "", None, [], {}
 	file_name = Path(filename).name
 	rows, payload = _build_sections_table(file_name)
-	return msg, "green", file_name, file_name, rows, payload
+	table = _render_table(rows)
+	return msg, "green", file_name, file_name, table, payload
 
 
 @app.callback(
 	Output("section-modal", "opened"),
 	Output("modal-title", "children"),
 	Output("modal-content", "children"),
-	Input("sections-table", "active_cell"),
-	State("sections-table", "data"),
+	Input({"type": "view-btn", "section": ALL}, "n_clicks"),
 	State("sections-payload", "data"),
 	prevent_initial_call=True,
 )
-def on_table_click(active_cell, rows, payload):
+def on_view(clicks, payload):
 	try:
-		if not active_cell:
+		ctx = callback_context
+		tid = getattr(ctx, "triggered_id", None)
+		if not tid or isinstance(tid, str):
 			return False, dash.no_update, dash.no_update
-		row_idx = active_cell.get("row")
-		col_id = active_cell.get("column_id")
-		if col_id != COL_ACTIONS:
+		section_title = tid.get("section")
+		if not section_title:
 			return False, dash.no_update, dash.no_update
-		section_title = rows[row_idx][COL_SECTION]
 		content = (payload or {}).get(section_title) or "Раздел не найден"
 		return True, section_title, content
 	except Exception:
