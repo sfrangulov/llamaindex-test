@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import dash
-from dash import Dash, dcc, Input, Output, State, callback_context, ALL
+from dash import Dash, dcc, Input, Output, State, callback_context, clientside_callback, ALL
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
@@ -314,12 +314,36 @@ main = dmc.AppShellMain(
     ],
 )
 
+theme_toggle = dmc.Switch(
+    offLabel=DashIconify(
+        icon="radix-icons:sun", width=15, color=dmc.DEFAULT_THEME["colors"]["yellow"][8]
+    ),
+    onLabel=DashIconify(
+        icon="radix-icons:moon",
+        width=15,
+        color=dmc.DEFAULT_THEME["colors"]["yellow"][6],
+    ),
+    id="color-scheme-toggle",
+    persistence=True,
+    color="grey",
+)
+
 header = dmc.AppShellHeader(
     dmc.Group(
         [
-            DashIconify(icon="hugeicons:artificial-intelligence-04", width=40),
-            dmc.Title("AI-АНАЛИЗ ФС"),
+            dmc.Group(
+                [
+                    DashIconify(
+                        icon="hugeicons:artificial-intelligence-04", width=40),
+                    dmc.Title("AI-АНАЛИЗ ФС"),
+                ],
+                h="100%",
+                px="md",
+            ),
+            theme_toggle,
         ],
+        justify="space-between",
+        style={"flex": 1},
         h="100%",
         px="md",
     )
@@ -781,6 +805,17 @@ def export_analysis_excel(n_clicks, file_name, analysis):
         log.exception("export_excel_failed")
         return dash.no_update
 
+
+clientside_callback(
+    """ 
+    (switchOn) => {
+       document.documentElement.setAttribute('data-mantine-color-scheme', switchOn ? 'dark' : 'light');  
+       return window.dash_clientside.no_update
+    }
+    """,
+    Output("color-scheme-toggle", "id"),
+    Input("color-scheme-toggle", "checked"),
+)
 
 if __name__ == "__main__":
     # Lazy init dirs
