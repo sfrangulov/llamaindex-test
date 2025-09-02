@@ -1,6 +1,6 @@
 from rag_engine import warmup, search_documents
 from fs_analyze_agent import analyze_fs_sections
-from fs_utils import get_fs, get_section_titles
+from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from md_reader import MarkItDownReader
 from dotenv import load_dotenv
@@ -487,21 +487,8 @@ def update_full_preview(active_tab, file_name):
         if active_tab != "preview" or not file_name:
             return dash.no_update
         md = read_markdown(file_name)
-        if isinstance(md, str) and (md.startswith("Файл Markdown не найден") or md.startswith("Ошибка")):
-            # Fallback to plain text preview from source DOCX (no persistence)
-            try:
-                path = CFG.data_path / file_name
-                if path.exists():
-                    reader = MarkItDownReader()
-                    docs = reader.load_data(path)
-                    if docs:
-                        md = docs[0].text or "(Предпросмотр недоступен)"
-                    else:
-                        md = "(Предпросмотр недоступен)"
-                else:
-                    md = "(Markdown не найден, исходный файл отсутствует)"
-            except Exception:
-                md = "(Не удалось сформировать предпросмотр)"
+        sections = split_by_sections_fs(md)
+        md = "\n".join(sections.values())
         return md
     except Exception:
         return dash.no_update

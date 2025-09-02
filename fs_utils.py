@@ -1,5 +1,8 @@
 import re
 
+import structlog
+log = structlog.get_logger(__name__)
+
 SECTION_TITLES = [
     'Лист изменений',
     'Глоссарий',
@@ -18,8 +21,10 @@ SECTION_TITLES = [
 #     'Тестовый сценарий',
 # ]
 
+
 def get_section_titles() -> list[str]:
     return list(SECTION_TITLES)
+
 
 def split_by_sections_fs(text):
     canonical = {t.lower(): t for t in SECTION_TITLES}
@@ -37,8 +42,14 @@ def split_by_sections_fs(text):
         if not chunk:
             continue
         key = canonical.get(m.group('title').lower(), m.group('title').strip())
+        if key == SECTION_TITLES[0]:
+            chunk = chunk.split("Оглавление", 1)[0]
+        if key != SECTION_TITLES[-1]:
+            # remove last row from chunk
+            chunk = chunk.rsplit('\n', 1)[0]
         result[key] = '# ' + chunk
     return result
+
 
 def get_fs(file_path: str) -> dict[str, str]:
     with open(file_path, "r") as f:
