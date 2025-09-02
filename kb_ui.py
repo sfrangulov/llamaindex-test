@@ -2,6 +2,7 @@ import os
 import re
 import json
 from typing import List, Tuple
+from urllib.parse import quote as _url_quote
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -53,7 +54,7 @@ mark {
 
 
 # --------------- Helpers ---------------
-async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
+async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str, str]]]:
     """Call search_documents and format answer + sources."""
     try:
         result_json = await search_documents(message)
@@ -61,20 +62,20 @@ async def _answer_once(message: str) -> Tuple[str, List[Tuple[str, str]]]:
         answer = payload.get("answer") or ""
         sources = payload.get("sources") or []
         # Make a compact citations list
-        cites: List[Tuple[str, str]] = []
+        cites: List[Tuple[str, str, str]] = []
         for s in sources:
             title = (s.get("file_name") or "source")
             score = float(s.get("score") or 0)
             title = f"{title} · {score:.2f}"
             snippet = (s.get("text") or "").strip()
-            cites.append((title, snippet))
+            cites.append((title, snippet, s.get("file_name") or ""))
         return answer, cites
     except Exception as e:
         log.exception("search_documents failed: %s", e)
         return f"Ошибка: {e}", []
 
 
-def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
+def _format_sources_md(rows: List[Tuple[str, str, str]], query: str) -> str:
     """Render sources as collapsible sections; keep snippet markdown intact.
 
     - Each source is wrapped in <details> to avoid a very long screen.
@@ -96,12 +97,15 @@ def _format_sources_md(rows: List[Tuple[str, str]], query: str) -> str:
 
     parts: List[str] = []
     parts.append(f"Источники: {len(rows)}\n")
-    for i, (title, snippet) in enumerate(rows, start=1):
+    # Where to serve markdown previews. Defaults to Dash UI port.
+    base = os.getenv("SOURCE_BASE_URL", "http://localhost:7861")
+    for i, (title, snippet, file_name) in enumerate(rows, start=1):
+        link = f"{base}/md/{_url_quote(file_name)}" if file_name else None
         # Collapsible block per source; allow raw HTML in Markdown
         parts.append(
             "\n".join(
                 [
-                    f"<details><summary><b>[{i}]</b> {title}</summary>",
+                    f"<details><summary><b>[{i}]</b> {title}{(' — <a href=\"' + link + '\" target=\"_blank\">открыть</a>' ) if link else ''}</summary>",
                     "",
                     _highlight(snippet, query),
                     "",

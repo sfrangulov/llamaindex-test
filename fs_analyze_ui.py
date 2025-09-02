@@ -7,6 +7,7 @@ import json
 import os
 import base64
 from pathlib import Path
+from urllib.parse import quote as _url_quote
 from typing import Any, Dict, List, Tuple
 
 import dash
@@ -26,6 +27,24 @@ app: Dash = dash.Dash(__name__, title="AI-анализ ФС",
                       external_stylesheets=external_stylesheets)
 app.config.suppress_callback_exceptions = True
 server = app.server
+
+# --------- Lightweight preview route for markdown sources ---------
+# Allows linking to source documents from Q&A answers.
+try:
+    from flask import send_file, Response  # type: ignore
+
+    @server.route("/md/<path:fname>")
+    def _serve_markdown(fname: str):
+        # Sanitize to base name only to prevent path traversal
+        safe = Path(fname).name
+        md_path = CFG.md_dir / f"{safe}.md"
+        if not md_path.exists():
+            return Response(f"Markdown не найден: {safe}", status=404, mimetype="text/plain; charset=utf-8")
+        # text/markdown so browsers render nicely; open in new tab from links
+        return send_file(str(md_path), mimetype="text/markdown; charset=utf-8")
+except Exception:
+    # If Flask isn't available for some reason, skip route (links will 404)
+    pass
 
 
 def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
@@ -606,9 +625,23 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         import asyncio
         ans = asyncio.run(search_documents(q, **kwargs))
         payload = json.loads(ans)
-        answer = payload.get("answer") or ""
+        answer = (payload.get("answer") or "").strip()
+        sources = payload.get("sources") or []
         if not answer or answer == "Empty Response":
             return "Ответ не найден в контексте документов.", "yellow"
+        # Append sources with links to inline markdown preview route
+        if sources:
+            parts = [answer, "", "---", "", f"Источники: {len(sources)}"]
+            for i, s in enumerate(sources, start=1):
+                fname = (s.get("file_name") or "source").strip()
+                try:
+                    score = float(s.get("score")) if s.get("score") is not None else None
+                except Exception:
+                    score = None
+                label = f"{fname} · {score:.2f}" if isinstance(score, (int, float)) else fname
+                url = f"/md/{_url_quote(fname)}"
+                parts.append(f"- [{label}]({url})")
+            answer = "\n".join(parts)
         # Render markdown in the alert body
         return dmc.TypographyStylesProvider(dcc.Markdown(answer, link_target="_blank")), "blue"
     except Exception as e:
