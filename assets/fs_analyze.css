@@ -16,5 +16,5 @@
 }
 
 .fs-md tbody tr:nth-child(even) {
-  background-color: #f5f5f5;
+  background-color: rgba(64, 192, 87, 0.1);
 }
