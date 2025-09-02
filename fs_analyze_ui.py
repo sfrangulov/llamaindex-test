@@ -659,7 +659,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
                 fname = (s.get("file_name") or "source").strip()
                 btns.append(
                     dmc.Button(
-                        f"Открыть: {fname}",
+                        fname,
                         variant="light",
                         size="xs",
                         id={"type": "open-doc-btn", "file": fname},
