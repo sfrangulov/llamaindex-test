@@ -1,5 +1,6 @@
 from rag_engine import warmup, search_documents
-from fs_analyze_agent import get_fs, get_section_titles, analyze_fs_sections
+from fs_analyze_agent import analyze_fs_sections
+from fs_utils import get_fs, get_section_titles
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from md_reader import MarkItDownReader
 from dotenv import load_dotenv
