@@ -1,4 +1,4 @@
-from flask import send_file, Response
+
 from rag_engine import warmup, search_documents
 from fs_analyze_agent import analyze_fs_sections
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
@@ -8,7 +8,6 @@ import json
 import os
 import base64
 from pathlib import Path
-from urllib.parse import quote as _url_quote
 from typing import Any, Dict, List, Tuple
 
 import dash
@@ -28,15 +27,6 @@ app: Dash = dash.Dash(__name__, title="AI-анализ ФС",
                       external_stylesheets=external_stylesheets)
 app.config.suppress_callback_exceptions = True
 server = app.server
-
-
-@server.route("/md/<path:fname>")
-def _serve_markdown(fname: str):
-    safe = Path(fname).name
-    md_path = CFG.md_dir / f"{safe}.md"
-    if not md_path.exists():
-        return Response(f"Markdown не найден: {safe}", status=404, mimetype="text/plain; charset=utf-8")
-    return send_file(str(md_path), mimetype="text/markdown; charset=utf-8")
 
 
 def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
@@ -183,6 +173,27 @@ main = dmc.AppShellMain(
                                     ),
                                 ])
                             ],
+                        ),
+                        # Modal for source document preview
+                        dmc.Modal(
+                            id="doc-preview-modal",
+                            title=dmc.Text(id="doc-preview-title", fw=600),
+                            children=[
+                                dmc.ScrollArea(
+                                    offsetScrollbars=True,
+                                    type="auto",
+                                    h=500,
+                                    children=[
+                                        dmc.TypographyStylesProvider(
+                                            dcc.Markdown(
+                                                id="doc-preview-content", link_target="_blank")
+                                        )
+                                    ],
+                                )
+                            ],
+                            size="xl",
+                            centered=True,
+                            opened=False,
                         ),
                     ],
                 ),
@@ -621,7 +632,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         sources = payload.get("sources") or []
         if not answer or answer == "Empty Response":
             return "Ответ не найден в контексте документов.", "yellow"
-        # Append sources with links to inline markdown preview route
+        # Append sources with action buttons to open modal preview
         if sources:
             parts = [answer, "", "---", "", f"Источники: {len(sources)}"]
             for i, s in enumerate(sources, start=1):
@@ -633,11 +644,29 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
                     score = None
                 label = f"{fname} · {score:.2f}" if isinstance(
                     score, (int, float)) else fname
-                url = f"/md/{_url_quote(fname)}"
-                parts.append(f"- [{label}]({url})")
+                # Render a placeholder line; actual buttons are provided below the alert
+                parts.append(f"- {label}")
             answer = "\n".join(parts)
         # Render markdown in the alert body
-        return dmc.TypographyStylesProvider(dcc.Markdown(answer, link_target="_blank")), "blue"
+        alert_body = dmc.Stack([
+            dmc.TypographyStylesProvider(
+                dcc.Markdown(answer, link_target="_blank")),
+        ])
+        # Add a button row with per-source preview buttons
+        if sources:
+            btns = []
+            for s in sources:
+                fname = (s.get("file_name") or "source").strip()
+                btns.append(
+                    dmc.Button(
+                        f"Открыть: {fname}",
+                        variant="light",
+                        size="xs",
+                        id={"type": "open-doc-btn", "file": fname},
+                    )
+                )
+            alert_body.children.append(dmc.Group(btns, gap="sm", wrap="wrap"))
+        return alert_body, "blue"
     except Exception as e:
         log.exception("chat_failed")
         return f"Ошибка: {e}", "red"
@@ -675,6 +704,43 @@ def reflect_chat_button(is_chatting):
 def reset_chatting_flag(_children):
     # When answer is updated (success or error), reset busy flag
     return False
+
+
+# Open modal for document preview when any source button is clicked
+@app.callback(
+    Output("doc-preview-modal", "opened"),
+    Output("doc-preview-title", "children"),
+    Output("doc-preview-content", "children"),
+    Input({"type": "open-doc-btn", "file": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def open_doc_preview(clicks):
+    try:
+        if not clicks or all(((c or 0) <= 0) for c in clicks):
+            return False, dash.no_update, dash.no_update
+        ctx = callback_context
+        tid = getattr(ctx, "triggered_id", None)
+        file_name = None
+        if isinstance(tid, dict):
+            file_name = tid.get("file")
+        else:
+            trg = getattr(ctx, "triggered", []) or []
+            if trg:
+                prop_id = trg[0].get("prop_id", "")
+                comp_id = prop_id.split(".")[0]
+                if comp_id.startswith("{"):
+                    try:
+                        d = json.loads(comp_id)
+                        file_name = d.get("file")
+                    except Exception:
+                        file_name = None
+        if not file_name:
+            return False, dash.no_update, dash.no_update
+        # Load markdown and show in modal
+        md = read_markdown(file_name)
+        return True, file_name, md
+    except Exception:
+        return False, dash.no_update, dash.no_update
 
 
 # Enable/disable Export button based on analysis availability and analyzing state
