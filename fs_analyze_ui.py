@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Tuple
 import dash
 from dash import Dash, dcc, Input, Output, State, callback_context, ALL
 import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -99,206 +100,217 @@ def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None
 
 
 # --------- Layout ---------
-app.layout = dmc.MantineProvider(
-    children=dmc.Container(
-        size="xl",
-        px="md",
-        children=[
-            dmc.Title("AI-анализ ФС", order=2),
-            dmc.Space(h=10),
-
-            dmc.Paper(
-                withBorder=True,
-                p="md",
-                radius="md",
-                children=[
-                    dmc.Group([
-                        dmc.Text("Загрузка ФС (.docx)", fw=500),
-                        dcc.Upload(
-                            id="upload-docx",
-                            children=dmc.Button("Выбрать файл"),
-                            multiple=False,
-                        ),
-                    ], justify="space-between"),
-                    dmc.Space(h=6),
-                    dmc.Alert(id="upload-status", title="Статус", color="gray",
-                              children="Ожидание загрузки", withCloseButton=False),
-                ],
-            ),
-
-            dmc.Space(h=20),
-
-            dmc.Badge(
-                id="current-file",
-                color="blue",
-                variant="light",
-                style={"display": "none"}),
-
-            dmc.Space(h=20),
-
-            dmc.Tabs(
-                id="main-tabs",
-                value="preview",
-                style={"display": "none"},
-                children=[
-                    dmc.TabsList(children=[
-                        dmc.TabsTab("Предпросмотр ФС", value="preview"),
-                        dmc.TabsTab("Анализа ФС", value="analysis"),
-                        dmc.TabsTab("Вопрос/ответ", value="qa"),
-                    ]),
-
-                    # Q&A Tab
-                    dmc.TabsPanel(
-                        value="qa",
-                        children=[
-                            dmc.Paper(
-                                withBorder=True,
-                                p="md",
-                                radius="md",
-                                children=[
-                                    dmc.Stack([
-                                        dmc.Textarea(
-                                            id="chat-question", placeholder="Задайте вопрос по ФС…", autosize=True, minRows=2),
-                                        dmc.Group([
-                                            dmc.Button(
-                                                "Спросить", id="chat-ask", variant="filled", color="blue"),
-                                            dmc.Checkbox(
-                                                id="chat-scope-file", label="Искать только в этой ФС", checked=True),
-                                        ], gap="sm"),
-                                        dcc.Loading(
-                                            type="default",
-                                            children=dmc.Alert(
-                                                id="chat-answer",
-                                                title="Ответ",
-                                                color="gray",
-                                                children="",
-                                                withCloseButton=False,
-                                            ),
-                                        ),
-                                    ])
-                                ],
-                            ),
-                        ],
+main = dmc.AppShellMain(
+    children=[
+        dmc.Paper(
+            withBorder=True,
+            p="md",
+            radius="md",
+            children=[
+                dmc.Group([
+                    dmc.Text("Загрузка ФС (.docx)", fw=500),
+                    dcc.Upload(
+                        id="upload-docx",
+                        children=dmc.Button("Выбрать файл"),
+                        multiple=False,
                     ),
+                ], justify="space-between"),
+                dmc.Space(h=6),
+                dmc.Alert(id="upload-status", title="Статус", color="gray",
+                          children="Ожидание загрузки", withCloseButton=False),
+            ],
+        ),
 
-                    # Analysis Tab
-                    dmc.TabsPanel(
-                        value="analysis",
-                        children=[
-                            dmc.Paper(
-                                withBorder=True,
-                                p="md",
-                                radius="md",
-                                children=[
+        dmc.Space(h=20),
+
+        dmc.Badge(
+            id="current-file",
+            color="blue",
+            variant="light",
+            style={"display": "none"}),
+
+        dmc.Space(h=20),
+
+        dmc.Tabs(
+            id="main-tabs",
+            value="preview",
+            style={"display": "none"},
+            children=[
+                dmc.TabsList(children=[
+                    dmc.TabsTab("Предпросмотр ФС", value="preview"),
+                    dmc.TabsTab("Анализа ФС", value="analysis"),
+                    dmc.TabsTab("Вопрос/ответ", value="qa"),
+                ]),
+
+                # Q&A Tab
+                dmc.TabsPanel(
+                    value="qa",
+                    children=[
+                        dmc.Paper(
+                            withBorder=True,
+                            p="md",
+                            radius="md",
+                            children=[
+                                dmc.Stack([
+                                    dmc.Textarea(
+                                        id="chat-question", placeholder="Задайте вопрос по ФС…", autosize=True, minRows=2),
                                     dmc.Group([
-                                        dmc.Group([
-                                            dmc.Button("Анализировать ФС", id="analyze-fs",
-                                                       variant="filled", color="blue"),
-                                            dmc.Button(
-                                                "Выгрузить в Excel",
-                                                id="export-excel",
-                                                variant="outline",
-                                                color="teal",
-                                                disabled=True,
-                                            ),
-                                        ], gap="sm"),
-                                    ], justify="space-between"),
-                                    dmc.Space(h=10),
+                                        dmc.Button(
+                                            "Спросить", id="chat-ask", variant="filled", color="blue"),
+                                        dmc.Checkbox(
+                                            id="chat-scope-file", label="Искать только в этой ФС", checked=True),
+                                    ], gap="sm"),
                                     dcc.Loading(
-                                        id="analysis-loading",
                                         type="default",
-                                        children=dmc.Box(
-                                            id="sections-table-wrap",
-                                            style={"overflowX": "auto"},
-                                            children=[],
+                                        children=dmc.Alert(
+                                            id="chat-answer",
+                                            title="Ответ",
+                                            color="gray",
+                                            children="",
+                                            withCloseButton=False,
                                         ),
                                     ),
-                                    dcc.Download(id="download-excel"),
-                                    dcc.Store(id="sections-payload"),
-                                    dcc.Store(id="analysis-result"),
-                                ],
-                            ),
+                                ])
+                            ],
+                        ),
+                    ],
+                ),
 
-                            # Modal for section preview (оставляем для разделов)
-                            dmc.Modal(
-                                id="section-modal",
-                                title=dmc.Text(id="modal-title", fw=600),
-                                children=[
-                                    dmc.ScrollArea(
-                                        offsetScrollbars=True,
-                                        type="auto",
-                                        h=500,
-                                        children=[
-                                            dmc.TypographyStylesProvider(
-                                                dcc.Markdown(
-                                                    id="modal-content", link_target="_blank")
-                                            )
-                                        ],
-                                    )
-                                ],
-                                size="xl",
-                                centered=True,
-                                opened=False,
-                            ),
-
-                            # Modal for analysis details
-                            dmc.Modal(
-                                id="analysis-modal",
-                                title=dmc.Text(
-                                    id="analysis-modal-title", fw=600),
-                                children=[
-                                    dmc.ScrollArea(
-                                        offsetScrollbars=True,
-                                        type="auto",
-                                        h=500,
-                                        children=[
-                                            dmc.TypographyStylesProvider(
-                                                dcc.Markdown(
-                                                    id="analysis-modal-content", link_target="_blank")
-                                            )
-                                        ],
-                                    )
-                                ],
-                                size="xl",
-                                centered=True,
-                                opened=False,
-                            ),
-                        ],
-                    ),
-
-                    # Inline Full Preview Tab
-                    dmc.TabsPanel(
-                        value="preview",
-                        children=[
-                            dmc.Paper(
-                                withBorder=True,
-                                p="md",
-                                radius="md",
-                                children=[
-                                    dmc.Box(
-                                        children=[
-                                            dmc.TypographyStylesProvider(
-                                                dcc.Markdown(
-                                                    id="full-md-content", link_target="_blank"),
-                                            )
-                                        ],
+                # Analysis Tab
+                dmc.TabsPanel(
+                    value="analysis",
+                    children=[
+                        dmc.Paper(
+                            withBorder=True,
+                            p="md",
+                            radius="md",
+                            children=[
+                                dmc.Group([
+                                    dmc.Group([
+                                        dmc.Button("Анализировать ФС", id="analyze-fs",
+                                                   variant="filled", color="blue"),
+                                        dmc.Button(
+                                            "Выгрузить в Excel",
+                                            id="export-excel",
+                                            variant="outline",
+                                            color="teal",
+                                            disabled=True,
+                                        ),
+                                    ], gap="sm"),
+                                ], justify="space-between"),
+                                dmc.Space(h=10),
+                                dcc.Loading(
+                                    id="analysis-loading",
+                                    type="default",
+                                    children=dmc.Box(
+                                        id="sections-table-wrap",
+                                        style={"overflowX": "auto"},
+                                        children=[],
                                     ),
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
-            ),
+                                ),
+                                dcc.Download(id="download-excel"),
+                                dcc.Store(id="sections-payload"),
+                                dcc.Store(id="analysis-result"),
+                            ],
+                        ),
 
-            dcc.Store(id="current-file-name"),
-            dcc.Store(id="analyzing-flag", data=False),
-            dcc.Store(id="chatting-flag", data=False),
+                        # Modal for section preview (оставляем для разделов)
+                        dmc.Modal(
+                            id="section-modal",
+                            title=dmc.Text(id="modal-title", fw=600),
+                            children=[
+                                dmc.ScrollArea(
+                                    offsetScrollbars=True,
+                                    type="auto",
+                                    h=500,
+                                    children=[
+                                        dmc.TypographyStylesProvider(
+                                            dcc.Markdown(
+                                                id="modal-content", link_target="_blank")
+                                        )
+                                    ],
+                                )
+                            ],
+                            size="xl",
+                            centered=True,
+                            opened=False,
+                        ),
+
+                        # Modal for analysis details
+                        dmc.Modal(
+                            id="analysis-modal",
+                            title=dmc.Text(
+                                id="analysis-modal-title", fw=600),
+                            children=[
+                                dmc.ScrollArea(
+                                    offsetScrollbars=True,
+                                    type="auto",
+                                    h=500,
+                                    children=[
+                                        dmc.TypographyStylesProvider(
+                                            dcc.Markdown(
+                                                id="analysis-modal-content", link_target="_blank")
+                                        )
+                                    ],
+                                )
+                            ],
+                            size="xl",
+                            centered=True,
+                            opened=False,
+                        ),
+                    ],
+                ),
+
+                # Inline Full Preview Tab
+                dmc.TabsPanel(
+                    value="preview",
+                    children=[
+                        dmc.Paper(
+                            withBorder=True,
+                            p="md",
+                            radius="md",
+                            children=[
+                                dmc.Box(
+                                    children=[
+                                        dmc.TypographyStylesProvider(
+                                            dcc.Markdown(
+                                                id="full-md-content", link_target="_blank"),
+                                        )
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+
+        dcc.Store(id="current-file-name"),
+        dcc.Store(id="analyzing-flag", data=False),
+        dcc.Store(id="chatting-flag", data=False),
+    ],
+)
+
+header = dmc.AppShellHeader(
+    dmc.Group(
+        [
+            DashIconify(icon="hugeicons:artificial-intelligence-04", width=40),
+            dmc.Title("AI-АНАЛИЗ ФС"),
         ],
+        h="100%",
+        px="md",
     )
 )
 
+app.layout = dmc.MantineProvider(dmc.AppShell(
+    children=[header, main],
+    header={"height": 60},
+    padding="md",
+))
 
 # --------- Callbacks ---------
+
+
 def _render_table(rows: List[Dict[str, Any]]):
     header = dmc.TableThead(dmc.TableTr([
         dmc.TableTh("#"),
