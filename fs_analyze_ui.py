@@ -634,18 +634,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
             return "Ответ не найден в контексте документов.", "yellow"
         # Append sources with action buttons to open modal preview
         if sources:
-            parts = [answer, "", "---", "", f"Источники: {len(sources)}"]
-            for i, s in enumerate(sources, start=1):
-                fname = (s.get("file_name") or "source").strip()
-                try:
-                    score = float(s.get("score")) if s.get(
-                        "score") is not None else None
-                except Exception:
-                    score = None
-                label = f"{fname} · {score:.2f}" if isinstance(
-                    score, (int, float)) else fname
-                # Render a placeholder line; actual buttons are provided below the alert
-                parts.append(f"- {label}")
+            parts = [answer, "", "---", "", "Источники:"]
             answer = "\n".join(parts)
         # Render markdown in the alert body
         alert_body = dmc.Stack([
@@ -655,8 +644,12 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         # Add a button row with per-source preview buttons
         if sources:
             btns = []
+            seen_files = set()
             for s in sources:
                 fname = (s.get("file_name") or "source").strip()
+                if fname in seen_files:
+                    continue
+                seen_files.add(fname)
                 btns.append(
                     dmc.Button(
                         fname,
