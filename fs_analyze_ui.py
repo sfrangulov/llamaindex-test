@@ -691,7 +691,7 @@ def poll_analysis_progress(_n, job_id, file_name):
         current = st.get("current") or ""
         status = st.get("status") or "running"
         value = int((done / total) * 100) if total else 0
-        text = f"{done}/{total} — Анализ раздела \"{current}\"" if total else "Подготовка…"
+        text = f"{done}/{total} — Анализ раздела \"{current}\"" if not done else "Подготовка…"
 
         if status == "done":
             analysis = ANALYSIS_RESULTS.get(job_id) or {}
