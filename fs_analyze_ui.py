@@ -9,6 +9,8 @@ import os
 import base64
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from threading import Thread, Lock
+import time
 
 import dash
 from dash import Dash, dcc, Input, Output, State, callback_context, clientside_callback, ALL
@@ -29,11 +31,64 @@ app.config.suppress_callback_exceptions = True
 server = app.server
 
 
+# --------- Background analysis state (simple in-process store) ---------
+PROGRESS_LOCK = Lock()
+ANALYSIS_PROGRESS: Dict[str, Dict[str, Any]] = {}
+ANALYSIS_RESULTS: Dict[str, Dict[str, Any]] = {}
+
+
+def _progress_update(job_id: str, done: int, total: int, current: str):
+    with PROGRESS_LOCK:
+        st = ANALYSIS_PROGRESS.get(job_id) or {}
+        st.update({
+            "done": int(done or 0),
+            "total": int(total or 0),
+            "current": current or "",
+            "status": st.get("status") or "running",
+        })
+        ANALYSIS_PROGRESS[job_id] = st
+
+
+def _run_analysis_worker(job_id: str, file_name: str, sections_from_md: Dict[str, str]):
+    try:
+        from fs_analyze_agent import analyze_fs_sections
+
+        def cb(done: int, total: int, current: str):
+            _progress_update(job_id, done, total, current)
+
+        # init progress
+        with PROGRESS_LOCK:
+            ANALYSIS_PROGRESS[job_id] = {
+                "done": 0,
+                "total": len(get_section_titles()),
+                "current": "",
+                "status": "running",
+                "file": file_name,
+            }
+
+        analysis = analyze_fs_sections(sections_from_md, progress_cb=cb)
+        with PROGRESS_LOCK:
+            ANALYSIS_RESULTS[job_id] = analysis
+            st = ANALYSIS_PROGRESS.get(job_id) or {}
+            st.update({"status": "done", "done": st.get("total", 0)})
+            ANALYSIS_PROGRESS[job_id] = st
+    except Exception as e:
+        log.exception("analysis_worker_failed", error=str(e))
+        with PROGRESS_LOCK:
+            st = ANALYSIS_PROGRESS.get(job_id) or {}
+            st.update({"status": "error", "error": str(e)})
+            ANALYSIS_PROGRESS[job_id] = st
+
+
 def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
     """Persist uploaded DOCX to attachments and index; return (ok, message)."""
     try:
         if not contents or not filename:
             return False, "Нет файла для загрузки"
+        # Validate extension: only .docx supported for ФС
+        ext = Path(filename).suffix.lower()
+        if ext != ".docx":
+            return False, f"Неподдерживаемый формат: {ext}. Загрузите файл .docx"
         _, content_string = contents.split(',')  # content_type unused
         decoded = base64.b64decode(content_string)
         # Ensure paths
@@ -114,6 +169,7 @@ main = dmc.AppShellMain(
                         id="upload-docx",
                         children=dmc.Button("Выбрать файл"),
                         multiple=False,
+                        accept=".docx",
                     ),
                 ], justify="space-between"),
                 dmc.Space(h=6),
@@ -221,6 +277,11 @@ main = dmc.AppShellMain(
                                         ),
                                     ], gap="sm"),
                                 ], justify="space-between"),
+                                dmc.Space(h=8),
+                                dmc.Stack([
+                                    dmc.Progress(id="analysis-progress-bar", value=0, color="blue", size="md"),
+                                    dmc.Text(id="analysis-progress-text", size="sm", c="dimmed"),
+                                ], gap="xs"),
                                 dmc.Space(h=10),
                                 dcc.Loading(
                                     id="analysis-loading",
@@ -234,6 +295,8 @@ main = dmc.AppShellMain(
                                 dcc.Download(id="download-excel"),
                                 dcc.Store(id="sections-payload"),
                                 dcc.Store(id="analysis-result"),
+                                dcc.Store(id="analysis-job-id"),
+                                dcc.Interval(id="analysis-progress-tick", interval=800, disabled=True, n_intervals=0),
                             ],
                         ),
 
@@ -555,16 +618,22 @@ def update_full_preview(active_tab, file_name):
         if active_tab != "preview" or not file_name:
             return dash.no_update
         md = read_markdown(file_name)
+        if not isinstance(md, str) or md.startswith("Файл Markdown не найден"):
+            return "(Предпросмотр недоступен: Markdown не найден)"
         sections = split_by_sections_fs(md)
-        md = "\n".join(sections.values())
+        if sections:
+            return "\n".join(sections.values())
+        # Fallback: show the whole markdown if разделы не распознаны
         return md
     except Exception:
         return dash.no_update
 
 
 @app.callback(
-    Output("sections-table-wrap", "children", allow_duplicate=True),
-    Output("sections-payload", "data", allow_duplicate=True),
+    Output("analysis-job-id", "data"),
+    Output("analysis-progress-tick", "disabled"),
+    Output("analysis-progress-bar", "value"),
+    Output("analysis-progress-text", "children"),
     Output("analysis-result", "data", allow_duplicate=True),
     Output("upload-status", "children", allow_duplicate=True),
     Output("upload-status", "color", allow_duplicate=True),
@@ -572,25 +641,71 @@ def update_full_preview(active_tab, file_name):
     State("current-file-name", "data"),
     prevent_initial_call=True,
 )
-def on_analyze_fs(n_clicks, file_name):
+def start_analysis_job(n_clicks, file_name):
     try:
         if not n_clicks or not file_name:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        # Build sections and run analysis
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        # Build sections snapshot for the worker
         try:
             md = read_markdown(file_name)
-            sections_from_md = get_fs(str(
-                CFG.md_dir / f"{file_name}.md")) if md and not md.startswith("Файл Markdown не найден") else {}
+            sections_from_md = get_fs(str(CFG.md_dir / f"{file_name}.md")) if md and not md.startswith("Файл Markdown не найден") else {}
         except Exception:
             sections_from_md = {}
 
-        analysis = analyze_fs_sections(sections_from_md)
-        rows, payload = _build_sections_table(file_name, analysis=analysis)
-        table = _render_table(rows)
-        return table, payload, analysis, "Анализ завершен", "blue"
+        job_id = f"{file_name}:{int(time.time()*1000)}"
+        # Reset progress in store
+        with PROGRESS_LOCK:
+            ANALYSIS_PROGRESS[job_id] = {"done": 0, "total": len(get_section_titles()), "current": "", "status": "running", "file": file_name}
+        # Launch worker thread
+        t = Thread(target=_run_analysis_worker, args=(job_id, file_name, sections_from_md), daemon=True)
+        t.start()
+        return job_id, False, 0, "Подготовка…", {}, "Анализ запущен", "blue"
     except Exception as e:
-        log.exception("analyze_failed")
-        return dash.no_update, dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
+        log.exception("analyze_start_failed")
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red"
+
+
+@app.callback(
+    Output("analysis-progress-tick", "disabled", allow_duplicate=True),
+    Output("analysis-progress-bar", "value", allow_duplicate=True),
+    Output("analysis-progress-text", "children", allow_duplicate=True),
+    Output("sections-table-wrap", "children", allow_duplicate=True),
+    Output("sections-payload", "data", allow_duplicate=True),
+    Output("analysis-result", "data", allow_duplicate=True),
+    Output("upload-status", "children", allow_duplicate=True),
+    Output("upload-status", "color", allow_duplicate=True),
+    Output("analyzing-flag", "data", allow_duplicate=True),
+    Input("analysis-progress-tick", "n_intervals"),
+    State("analysis-job-id", "data"),
+    State("current-file-name", "data"),
+    prevent_initial_call=True,
+)
+def poll_analysis_progress(_n, job_id, file_name):
+    try:
+        if not job_id:
+            return True, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        with PROGRESS_LOCK:
+            st = (ANALYSIS_PROGRESS.get(job_id) or {}).copy()
+        total = int(st.get("total")) if st else 0
+        done = int(st.get("done")) if st else 0
+        current = st.get("current") or ""
+        status = st.get("status") or "running"
+        value = int((done / total) * 100) if total else 0
+        text = f"{done}/{total} — Анализ раздела \"{current}\"" if total else "Подготовка…"
+
+        if status == "done":
+            analysis = ANALYSIS_RESULTS.get(job_id) or {}
+            rows, payload = _build_sections_table(file_name, analysis=analysis)
+            table = _render_table(rows)
+            return True, 100, f"Готово: {done}/{total}", table, payload, analysis, "Анализ завершен", "blue", False
+        if status == "error":
+            err = st.get("error") or "Ошибка анализа"
+            return True, value, text, dash.no_update, dash.no_update, dash.no_update, f"Ошибка анализа: {err}", "red", False
+        # still running
+        return False, value, text, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    except Exception as e:
+        log.exception("poll_progress_failed")
+        return True, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, f"Ошибка анализа: {e}", "red", False
 
 
 # Separate fast callback to toggle analyzing flag when user clicks analyze

@@ -2,7 +2,7 @@ from rag_engine import configure_settings
 import re
 import os
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Callable, Optional
 from llama_index.core import Settings
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.memory import Memory
@@ -170,7 +170,10 @@ def _parse_json_loose(text: str) -> Dict[str, Any]:
         return {}
 
 
-def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]]:
+def analyze_fs_sections(
+    fs_sections: dict[str, str],
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+) -> dict[str, Dict[str, Any]]:
     """Run LLM-based checklist analysis per FS section using FS_QUESTIONS.
 
     Returns mapping: section_title -> {
@@ -190,6 +193,8 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
     configure_settings()
 
     results: dict[str, Dict[str, Any]] = {}
+    total = len(SECTION_TITLES)
+    done = 0
     for title in SECTION_TITLES:
         content = (fs_sections or {}).get(title, "").strip()
         questions_md = (FS_QUESTIONS or {}).get(title, "").strip()
@@ -206,6 +211,12 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
                 "summary": "Раздел отсутствует",
                 "details_markdown": details,
             }
+            done += 1
+            try:
+                if progress_cb:
+                    progress_cb(done, total, title)
+            except Exception:
+                pass
             continue
 
         if not questions_md:
@@ -280,6 +291,14 @@ def analyze_fs_sections(fs_sections: dict[str, str]) -> dict[str, Dict[str, Any]
             "details_markdown": details_md,
             "overall_assessment": overall_norm,
         }
+
+        # progress update after finishing this section
+        done += 1
+        try:
+            if progress_cb:
+                progress_cb(done, total, title)
+        except Exception:
+            pass
 
     return results
 
