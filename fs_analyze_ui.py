@@ -1,3 +1,4 @@
+from flask import send_file, Response
 from rag_engine import warmup, search_documents
 from fs_analyze_agent import analyze_fs_sections
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
@@ -28,23 +29,14 @@ app: Dash = dash.Dash(__name__, title="AI-анализ ФС",
 app.config.suppress_callback_exceptions = True
 server = app.server
 
-# --------- Lightweight preview route for markdown sources ---------
-# Allows linking to source documents from Q&A answers.
-try:
-    from flask import send_file, Response  # type: ignore
 
-    @server.route("/md/<path:fname>")
-    def _serve_markdown(fname: str):
-        # Sanitize to base name only to prevent path traversal
-        safe = Path(fname).name
-        md_path = CFG.md_dir / f"{safe}.md"
-        if not md_path.exists():
-            return Response(f"Markdown не найден: {safe}", status=404, mimetype="text/plain; charset=utf-8")
-        # text/markdown so browsers render nicely; open in new tab from links
-        return send_file(str(md_path), mimetype="text/markdown; charset=utf-8")
-except Exception:
-    # If Flask isn't available for some reason, skip route (links will 404)
-    pass
+@server.route("/md/<path:fname>")
+def _serve_markdown(fname: str):
+    safe = Path(fname).name
+    md_path = CFG.md_dir / f"{safe}.md"
+    if not md_path.exists():
+        return Response(f"Markdown не найден: {safe}", status=404, mimetype="text/plain; charset=utf-8")
+    return send_file(str(md_path), mimetype="text/markdown; charset=utf-8")
 
 
 def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
@@ -635,10 +627,12 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
             for i, s in enumerate(sources, start=1):
                 fname = (s.get("file_name") or "source").strip()
                 try:
-                    score = float(s.get("score")) if s.get("score") is not None else None
+                    score = float(s.get("score")) if s.get(
+                        "score") is not None else None
                 except Exception:
                     score = None
-                label = f"{fname} · {score:.2f}" if isinstance(score, (int, float)) else fname
+                label = f"{fname} · {score:.2f}" if isinstance(
+                    score, (int, float)) else fname
                 url = f"/md/{_url_quote(fname)}"
                 parts.append(f"- [{label}]({url})")
             answer = "\n".join(parts)
