@@ -136,6 +136,7 @@ main = dmc.AppShellMain(
             id="main-tabs",
             value="preview",
             style={"display": "none"},
+            styles={"panel": {"marginTop": 20}},
             children=[
                 dmc.TabsList(children=[
                     dmc.TabsTab("Предпросмотр ФС", value="preview"),
