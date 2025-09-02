@@ -2,7 +2,6 @@ from rag_engine import warmup, search_documents
 from fs_analyze_agent import analyze_fs_sections
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
-from md_reader import MarkItDownReader
 from dotenv import load_dotenv
 import json
 import os
@@ -230,8 +229,10 @@ app.layout = dmc.MantineProvider(
                                         type="auto",
                                         h=500,
                                         children=[
-                                            dcc.Markdown(
-                                                id="modal-content", link_target="_blank", className="fs-md")
+                                            dmc.TypographyStylesProvider(
+                                                dcc.Markdown(
+                                                    id="modal-content", link_target="_blank")
+                                            )
                                         ],
                                     )
                                 ],
@@ -243,14 +244,18 @@ app.layout = dmc.MantineProvider(
                             # Modal for analysis details
                             dmc.Modal(
                                 id="analysis-modal",
-                                title=dmc.Text(id="analysis-modal-title", fw=600),
+                                title=dmc.Text(
+                                    id="analysis-modal-title", fw=600),
                                 children=[
                                     dmc.ScrollArea(
                                         offsetScrollbars=True,
                                         type="auto",
                                         h=500,
                                         children=[
-                                            dcc.Markdown(id="analysis-modal-content", link_target="_blank", className="fs-md")
+                                            dmc.TypographyStylesProvider(
+                                                dcc.Markdown(
+                                                    id="analysis-modal-content", link_target="_blank")
+                                            )
                                         ],
                                     )
                                 ],
@@ -272,8 +277,10 @@ app.layout = dmc.MantineProvider(
                                 children=[
                                     dmc.Box(
                                         children=[
-                                            dcc.Markdown(
-                                                id="full-md-content", link_target="_blank", className="fs-md"),
+                                            dmc.TypographyStylesProvider(
+                                                dcc.Markdown(
+                                                    id="full-md-content", link_target="_blank"),
+                                            )
                                         ],
                                     ),
                                 ],
@@ -324,7 +331,8 @@ def _render_table(rows: List[Dict[str, Any]]):
         if not analysis_text or analysis_text == "—":
             analysis_cell = dmc.Text("—")
         else:
-            green = analysis_text.lower().startswith("ok") or analysis_text.lower().startswith("ок")
+            green = analysis_text.lower().startswith(
+                "ok") or analysis_text.lower().startswith("ок")
             # Truncate label, full text will be in modal
             trimmed = analysis_text
             max_len = 40
@@ -467,7 +475,8 @@ def on_analysis_click(clicks, analysis):
             sec = analysis.get(section) or {}
             if isinstance(sec, dict):
                 # Prefer detailed markdown; fallback to summary
-                details = (sec.get("details_markdown") or sec.get("summary") or "").strip()
+                details = (sec.get("details_markdown")
+                           or sec.get("summary") or "").strip()
         if not details:
             details = "(Детали анализа отсутствуют)"
         # Return plain markdown string; layout already contains dcc.Markdown component
@@ -589,7 +598,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         if not answer or answer == "Empty Response":
             return "Ответ не найден в контексте документов.", "yellow"
         # Render markdown in the alert body
-        return dcc.Markdown(answer, link_target="_blank", className="fs-md"), "blue"
+        return dmc.TypographyStylesProvider(dcc.Markdown(answer, link_target="_blank")), "blue"
     except Exception as e:
         log.exception("chat_failed")
         return f"Ошибка: {e}", "red"
