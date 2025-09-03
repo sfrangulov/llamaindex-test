@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import dash
-from dash import dcc, html, Input, Output, State, callback_context, ALL
+from dash import dcc, Input, Output, State, callback_context, ALL
 import dash_mantine_components as dmc
 
 from storage import list_documents, read_markdown, delete_document
