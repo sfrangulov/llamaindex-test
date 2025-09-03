@@ -24,7 +24,7 @@ def _human_size(n: int | float | None) -> str:
 def _render_table(rows: List[Dict[str, Any]]):
     header = dmc.TableThead(dmc.TableTr([
         dmc.TableTh("#"),
-        dmc.TableTh("Название"),
+        dmc.TableTh("Название", maw=640),
         dmc.TableTh("Размер"),
         dmc.TableTh("Изменен"),
         dmc.TableTh("Действия"),
@@ -40,7 +40,7 @@ def _render_table(rows: List[Dict[str, Any]]):
                 id={"type": "stg-open-doc", "file": name},
                 variant="subtle",
                 color="blue",
-                maw=320,
+                maw=620,
             ),
             label=name,
         )
