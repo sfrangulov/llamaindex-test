@@ -17,6 +17,8 @@ from dash import Dash, dcc, Input, Output, State, callback_context, clientside_c
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
+from theme import THEME
+
 import structlog
 log = structlog.get_logger(__name__)
 
@@ -361,14 +363,35 @@ main = dmc.AppShellMain(
                                     type="auto",
                                     h=500,
                                     children=[
-                                        dmc.TypographyStylesProvider(
-                                            dcc.Markdown(id="similar-subjects-content", link_target="_blank")
-                                        )
+                                        dmc.Box(
+                                            id="similar-subjects-table-wrap")
                                     ],
                                 ),
                             ],
                         ),
                     ],
+                ),
+
+                # Modal for similar FS preview
+                dmc.Modal(
+                    id="similar-doc-preview-modal",
+                    title=dmc.Text(id="similar-doc-preview-title", fw=600),
+                    children=[
+                        dmc.ScrollArea(
+                            offsetScrollbars=True,
+                            type="auto",
+                            h=500,
+                            children=[
+                                dmc.TypographyStylesProvider(
+                                    dcc.Markdown(
+                                        id="similar-doc-preview-content", link_target="_blank")
+                                )
+                            ],
+                        )
+                    ],
+                    size="xl",
+                    centered=True,
+                    opened=False,
                 ),
 
                 # Inline Full Preview Tab
@@ -399,6 +422,7 @@ main = dmc.AppShellMain(
         dcc.Store(id="analyzing-flag", data=False),
         dcc.Store(id="chatting-flag", data=False),
         dcc.Store(id="finding-similar-flag", data=False),
+        dcc.Store(id="similar-subjects-rows", data=[]),
     ],
 )
 
@@ -441,7 +465,7 @@ app.layout = dmc.MantineProvider(dmc.AppShell(
     children=[header, main],
     header={"height": 60},
     padding="md",
-))
+), theme=THEME)
 
 # --------- Callbacks ---------
 
@@ -918,8 +942,37 @@ def export_analysis_excel(n_clicks, file_name, analysis):
         return dash.no_update
 
 
+def _render_similar_table(rows):
+    header = dmc.TableThead(dmc.TableTr([
+        dmc.TableTh("#"),
+        dmc.TableTh("Название документа"),
+        dmc.TableTh("Процент совпадения"),
+    ]))
+    body_rows = []
+    for i, r in enumerate(rows or [], start=1):
+        name = r.get("file_name", "")
+        score = r.get("score", 0)
+        pct = round(float(score) * 100, 2)
+        link_btn = dmc.Button(
+            name,
+            variant="subtle",
+            color="blue",
+            id={"type": "open-similar-doc", "file": name},
+        )
+        body_rows.append(dmc.TableTr([
+            dmc.TableTd(str(i)),
+            dmc.TableTd(link_btn),
+            dmc.TableTd(f"{pct}%"),
+        ]))
+    body = dmc.TableTbody(body_rows)
+    table = dmc.Table(highlightOnHover=True, striped=True,
+                      verticalSpacing="sm", horizontalSpacing="md", children=[header, body])
+    return table
+
+
 @app.callback(
-    Output("similar-subjects-content", "children"),
+    Output("similar-subjects-table-wrap", "children"),
+    Output("similar-subjects-rows", "data"),
     Input("find-similar-subjects", "n_clicks"),
     State("current-file-name", "data"),
     prevent_initial_call=True,
@@ -927,21 +980,17 @@ def export_analysis_excel(n_clicks, file_name, analysis):
 def on_find_similar_subjects(n_clicks, file_name):
     try:
         if not n_clicks or not file_name:
-            return dash.no_update
+            return dash.no_update, dash.no_update
         matches = find_similar_subjects(file_name, top_k=7) or []
         if not matches:
-            return "Не найдено похожих ФС по разделу 'Предмет разработки'."
-        lines = ["Топ совпадений:", ""]
-        for m in matches:
-            fname = (m.get("file_name") or "").strip()
-            score = m.get("score")
-            lines.append(f"- {fname} — сходство: {score}")
-        lines.append("")
-        lines.append("Подсказка: откройте файл во вкладке 'Вопрос/ответ' и задайте уточняющий вопрос.")
-        return "\n".join(lines)
+            empty = dmc.Alert(
+                "Не найдено похожих ФС по разделу 'Предмет разработки'.", color="gray")
+            return empty, []
+        table = _render_similar_table(matches)
+        return table, matches
     except Exception as e:
         log.exception("similar_subjects_failed")
-        return f"Ошибка поиска похожих: {e}"
+        return dmc.Alert(f"Ошибка поиска похожих: {e}", color="red"), []
 
 
 # Toggle spinner: set busy flag when user clicks the button
@@ -965,18 +1014,55 @@ def set_finding_similar_flag(n_clicks):
 )
 def reflect_find_similar_button(is_busy):
     busy = bool(is_busy)
-    label = "Ищем…" if busy else "Найти схожие по 'Предмет разработки'"
+    label = "Ищем…" if busy else "Найти схожие ФС"
     return busy, busy, label
 
 
 # Reset busy flag once results are rendered
 @app.callback(
     Output("finding-similar-flag", "data", allow_duplicate=True),
-    Input("similar-subjects-content", "children"),
+    Input("similar-subjects-table-wrap", "children"),
     prevent_initial_call=True,
 )
 def reset_finding_similar_flag(_):
     return False
+
+
+# Open modal for similar doc preview
+@app.callback(
+    Output("similar-doc-preview-modal", "opened"),
+    Output("similar-doc-preview-title", "children"),
+    Output("similar-doc-preview-content", "children"),
+    Input({"type": "open-similar-doc", "file": ALL}, "n_clicks"),
+    State("similar-subjects-rows", "data"),
+    prevent_initial_call=True,
+)
+def open_similar_doc_preview(clicks, rows):
+    try:
+        if not clicks or all(((c or 0) <= 0) for c in clicks):
+            return False, dash.no_update, dash.no_update
+        ctx = callback_context
+        tid = getattr(ctx, "triggered_id", None)
+        file_name = None
+        if isinstance(tid, dict):
+            file_name = tid.get("file")
+        else:
+            trg = getattr(ctx, "triggered", []) or []
+            if trg:
+                prop_id = trg[0].get("prop_id", "")
+                comp_id = prop_id.split(".")[0]
+                if comp_id.startswith("{"):
+                    try:
+                        d = json.loads(comp_id)
+                        file_name = d.get("file")
+                    except Exception:
+                        file_name = None
+        if not file_name:
+            return False, dash.no_update, dash.no_update
+        md = read_markdown(file_name)
+        return True, file_name, md
+    except Exception:
+        return False, dash.no_update, dash.no_update
 
 
 clientside_callback(
