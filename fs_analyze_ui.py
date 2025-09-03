@@ -398,6 +398,7 @@ main = dmc.AppShellMain(
         dcc.Store(id="current-file-name"),
         dcc.Store(id="analyzing-flag", data=False),
         dcc.Store(id="chatting-flag", data=False),
+        dcc.Store(id="finding-similar-flag", data=False),
     ],
 )
 
@@ -941,6 +942,41 @@ def on_find_similar_subjects(n_clicks, file_name):
     except Exception as e:
         log.exception("similar_subjects_failed")
         return f"Ошибка поиска похожих: {e}"
+
+
+# Toggle spinner: set busy flag when user clicks the button
+@app.callback(
+    Output("finding-similar-flag", "data"),
+    Input("find-similar-subjects", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_finding_similar_flag(n_clicks):
+    if not n_clicks:
+        return dash.no_update
+    return True
+
+
+# Reflect button loading/disabled/label from busy flag
+@app.callback(
+    Output("find-similar-subjects", "loading"),
+    Output("find-similar-subjects", "disabled"),
+    Output("find-similar-subjects", "children"),
+    Input("finding-similar-flag", "data"),
+)
+def reflect_find_similar_button(is_busy):
+    busy = bool(is_busy)
+    label = "Ищем…" if busy else "Найти схожие по 'Предмет разработки'"
+    return busy, busy, label
+
+
+# Reset busy flag once results are rendered
+@app.callback(
+    Output("finding-similar-flag", "data", allow_duplicate=True),
+    Input("similar-subjects-content", "children"),
+    prevent_initial_call=True,
+)
+def reset_finding_similar_flag(_):
+    return False
 
 
 clientside_callback(
