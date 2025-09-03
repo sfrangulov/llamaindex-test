@@ -236,7 +236,7 @@ main = dmc.AppShellMain(
                                     children=[
                                         dmc.TypographyStylesProvider(
                                             dcc.Markdown(
-                                                id="doc-preview-content", link_target="_blank")
+                                                id="doc-preview-content", link_target="_blank", className="markdown")
                                         )
                                     ],
                                 )
@@ -304,7 +304,7 @@ main = dmc.AppShellMain(
                                     children=[
                                         dmc.TypographyStylesProvider(
                                             dcc.Markdown(
-                                                id="modal-content", link_target="_blank")
+                                                id="modal-content", link_target="_blank", className="markdown")
                                         )
                                     ],
                                 )
@@ -327,7 +327,7 @@ main = dmc.AppShellMain(
                                     children=[
                                         dmc.TypographyStylesProvider(
                                             dcc.Markdown(
-                                                id="analysis-modal-content", link_target="_blank")
+                                                id="analysis-modal-content", link_target="_blank", className="markdown")
                                         )
                                     ],
                                 )
@@ -384,7 +384,7 @@ main = dmc.AppShellMain(
                             children=[
                                 dmc.TypographyStylesProvider(
                                     dcc.Markdown(
-                                        id="similar-doc-preview-content", link_target="_blank")
+                                        id="similar-doc-preview-content", link_target="_blank", className="markdown")
                                 )
                             ],
                         )
@@ -407,7 +407,7 @@ main = dmc.AppShellMain(
                                     children=[
                                         dmc.TypographyStylesProvider(
                                             dcc.Markdown(
-                                                id="full-md-content", link_target="_blank"),
+                                                id="full-md-content", link_target="_blank", className="markdown"),
                                         )
                                     ],
                                 ),
@@ -800,7 +800,7 @@ def on_chat_ask(n_clicks, question, file_name, scope_file):
         # Render markdown in the alert body
         alert_body = dmc.Stack([
             dmc.TypographyStylesProvider(
-                dcc.Markdown(answer, link_target="_blank")),
+                dcc.Markdown(answer, link_target="_blank", className="markdown")),
         ])
         # Add a button row with per-source preview buttons
         if sources:
