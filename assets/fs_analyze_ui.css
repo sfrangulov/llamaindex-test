@@ -1,7 +1,19 @@
-div.markdown tr:nth-child(odd) { background-color: #f8f9fa; }
-
-div.markdown td { border: 1px #dee2e6 solid; }
-
 div.markdown th {
-    display: none;
+  display: none;
+}
+
+html[data-mantine-color-scheme="light"] div.markdown tr:nth-child(odd) {
+  background-color: #f8f9fa;
+}
+
+html[data-mantine-color-scheme="light"] div.markdown td {
+  border: 1px #dee2e6 solid;
+}
+
+html[data-mantine-color-scheme="dark"] div.markdown tr:nth-child(odd) {
+  background-color: #2e2e2e;
+}
+
+html[data-mantine-color-scheme="dark"] div.markdown td {
+  border: 1px #424242 solid;
 }
