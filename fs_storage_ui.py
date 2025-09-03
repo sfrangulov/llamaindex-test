@@ -9,6 +9,14 @@ import dash_mantine_components as dmc
 from storage import list_documents, read_markdown, delete_document
 
 
+def _sort_rows_by_date_desc(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Sort by ISO timestamp (newest first); ISO strings sort lexicographically by time
+    try:
+        return sorted(rows or [], key=lambda r: (r or {}).get("uploaded_at_iso") or "", reverse=True)
+    except Exception:
+        return rows or []
+
+
 def _human_size(n: int | float | None) -> str:
     try:
         n = float(n or 0)
@@ -77,7 +85,6 @@ def get_layout() -> Any:
                 dmc.Space(h=8),
                 dmc.Group([
                     dmc.TextInput(id="stg-search", placeholder="Поиск по названию…", style={"flex": 1}),
-                    dmc.Button("Найти", id="stg-search-btn", variant="filled", color="blue"),
                     dmc.Button("Обновить", id="stg-refresh", variant="light"),
                 ], align="stretch"),
                 dmc.Space(h=10),
@@ -140,7 +147,7 @@ def register_callbacks(app: dash.Dash):
     def _on_nav(val):
         if val != "storage":
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        rows = list_documents(None)
+        rows = _sort_rows_by_date_desc(list_documents(None))
         return rows, _render_table(rows), f"Найдено: {len(rows)}", "gray"
 
     # Fetch and render table
@@ -149,14 +156,14 @@ def register_callbacks(app: dash.Dash):
         Output("stg-table-wrap", "children"),
         Output("stg-status", "children"),
         Output("stg-status", "color"),
+        Input("stg-search", "value"),  # realtime search on typing
         Input("stg-refresh", "n_clicks"),
-        Input("stg-search-btn", "n_clicks"),
-        State("stg-search", "value"),
         prevent_initial_call=True,
     )
-    def refresh_table(_n1, _n2, search):
+    def refresh_table(search, _n_refresh):
         try:
             rows = list_documents((search or "").strip() or None)
+            rows = _sort_rows_by_date_desc(rows)
             table = _render_table(rows)
             msg = f"Найдено: {len(rows)}"
             return rows, table, msg, "gray"
@@ -244,6 +251,7 @@ def register_callbacks(app: dash.Dash):
                 return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
             res = delete_document(str(target))
             rows = list_documents((search or "").strip() or None)
+            rows = _sort_rows_by_date_desc(rows)
             table = _render_table(rows)
             ok = bool(res.get("file_deleted") or res.get("md_deleted") or (res.get("vectors_deleted", 0) > 0))
             msg = f"Удалено: {target}" if ok else f"Не удалось удалить: {target}"
