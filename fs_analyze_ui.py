@@ -5,6 +5,7 @@ from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from dotenv import load_dotenv
 from fs_chat_ui import get_layout as chat_get_layout, register_callbacks as chat_register_callbacks
+from fs_storage_ui import get_layout as storage_get_layout, register_callbacks as storage_register_callbacks
 import json
 import os
 import base64
@@ -477,6 +478,7 @@ header = dmc.AppShellHeader(
                     data=[
                         {"label": "Анализ", "value": "analysis"},
                         {"label": "Чат", "value": "chat"},
+                        {"label": "Хранилище", "value": "storage"},
                     ],
                     size="sm",
                 ),
@@ -501,9 +503,11 @@ app.layout = dmc.MantineProvider(dmc.AppShell(
 # Wrap analysis content and add chat section; reuse existing analysis children
 _analysis_section = dmc.Box(id="analysis-section", children=main.children)
 _chat_section = dmc.Box(id="chat-section", style={"display": "none"}, children=[chat_get_layout()])
-main = dmc.AppShellMain(children=[_analysis_section, _chat_section])
+_storage_section = dmc.Box(id="storage-section", style={"display": "none"}, children=[storage_get_layout()])
+main = dmc.AppShellMain(children=[_analysis_section, _chat_section, _storage_section])
 
 chat_register_callbacks(app, search_documents)
+storage_register_callbacks(app)
 
 # Rebuild layout with the updated main containing nav sections
 app.layout = dmc.MantineProvider(dmc.AppShell(
@@ -554,12 +558,15 @@ def _render_table(rows: List[Dict[str, Any]]):
 @app.callback(
     Output("analysis-section", "style"),
     Output("chat-section", "style"),
+    Output("storage-section", "style"),
     Input("top-nav", "value"),
 )
 def toggle_sections(nav_value):
     if nav_value == "chat":
-        return {"display": "none"}, {"display": "block"}
-    return {"display": "block"}, {"display": "none"}
+        return {"display": "none"}, {"display": "block"}, {"display": "none"}
+    if nav_value == "storage":
+        return {"display": "none"}, {"display": "none"}, {"display": "block"}
+    return {"display": "block"}, {"display": "none"}, {"display": "none"}
 
 
 @app.callback(
