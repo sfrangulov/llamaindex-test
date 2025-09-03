@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import json
 
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, clientside_callback
 import dash_mantine_components as dmc
 from storage import read_markdown
 
@@ -64,6 +64,9 @@ def _render_chat_messages(history: List[Dict[str, Any]] | None) -> List[Any]:
                 justify=align,
             )
         )
+    # Add an anchor before the latest message to scroll into view
+    if ui:
+        ui.insert(len(ui) - 1, html.Div(id="dlg-scroll-anchor"))
     return ui
 
 
@@ -116,6 +119,7 @@ def get_layout() -> Any:
             # Stores
             dcc.Store(id="dlg-history", data=[]),
             dcc.Store(id="dlg-busy", data=False),
+            dcc.Store(id="dlg-scroll", data=None),
             # Chat-level document preview modal
             dmc.Modal(
                 id="dlg-doc-preview-modal",
@@ -276,3 +280,22 @@ def register_callbacks(app: dash.Dash, search_documents):
             return True, fname, md
         except Exception:
             return False, dash.no_update, dash.no_update
+
+    # Smooth scroll to newest message when the thread updates
+    clientside_callback(
+        """
+        (children) => {
+            const el = document.getElementById('dlg-scroll-anchor');
+            if (el && typeof el.scrollIntoView === 'function') {
+                try {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } catch (e) {
+                    el.scrollIntoView();
+                }
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("dlg-scroll", "data"),
+        Input("dlg-thread", "children"),
+    )
