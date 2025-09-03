@@ -1,5 +1,6 @@
 
 from rag_engine import warmup, search_documents
+from fs_similarity import find_similar_subjects
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from dotenv import load_dotenv
@@ -186,6 +187,7 @@ main = dmc.AppShellMain(
                 dmc.TabsList(children=[
                     dmc.TabsTab("Предпросмотр ФС", value="preview"),
                     dmc.TabsTab("Анализа ФС", value="analysis"),
+                    dmc.TabsTab("Схожие ФС", value="similar"),
                     dmc.TabsTab("Вопрос/ответ", value="qa"),
                 ]),
 
@@ -331,6 +333,40 @@ main = dmc.AppShellMain(
                             size="xl",
                             centered=True,
                             opened=False,
+                        ),
+
+                    ],
+                ),
+
+                # Similar FS Tab
+                dmc.TabsPanel(
+                    value="similar",
+                    children=[
+                        dmc.Paper(
+                            withBorder=True,
+                            p="md",
+                            radius="md",
+                            children=[
+                                dmc.Group([
+                                    dmc.Button(
+                                        "Поиск",
+                                        id="find-similar-subjects",
+                                        variant="light",
+                                        color="grape",
+                                    ),
+                                ], justify="flex-start"),
+                                dmc.Space(h=10),
+                                dmc.ScrollArea(
+                                    offsetScrollbars=True,
+                                    type="auto",
+                                    h=500,
+                                    children=[
+                                        dmc.TypographyStylesProvider(
+                                            dcc.Markdown(id="similar-subjects-content", link_target="_blank")
+                                        )
+                                    ],
+                                ),
+                            ],
                         ),
                     ],
                 ),
@@ -879,6 +915,32 @@ def export_analysis_excel(n_clicks, file_name, analysis):
     except Exception:
         log.exception("export_excel_failed")
         return dash.no_update
+
+
+@app.callback(
+    Output("similar-subjects-content", "children"),
+    Input("find-similar-subjects", "n_clicks"),
+    State("current-file-name", "data"),
+    prevent_initial_call=True,
+)
+def on_find_similar_subjects(n_clicks, file_name):
+    try:
+        if not n_clicks or not file_name:
+            return dash.no_update
+        matches = find_similar_subjects(file_name, top_k=7) or []
+        if not matches:
+            return "Не найдено похожих ФС по разделу 'Предмет разработки'."
+        lines = ["Топ совпадений:", ""]
+        for m in matches:
+            fname = (m.get("file_name") or "").strip()
+            score = m.get("score")
+            lines.append(f"- {fname} — сходство: {score}")
+        lines.append("")
+        lines.append("Подсказка: откройте файл во вкладке 'Вопрос/ответ' и задайте уточняющий вопрос.")
+        return "\n".join(lines)
+    except Exception as e:
+        log.exception("similar_subjects_failed")
+        return f"Ошибка поиска похожих: {e}"
 
 
 clientside_callback(
