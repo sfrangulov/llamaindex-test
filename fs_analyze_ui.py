@@ -202,6 +202,13 @@ main = dmc.AppShellMain(
                             p="md",
                             radius="md",
                             children=[
+                                dmc.Alert(
+                                    "Задайте вопрос по содержанию ФС. При включённой опции ‘Искать только в этой ФС’ ответ формируется по выбранному документу; иначе — по всей базе. Источники ответа можно открыть в предпросмотре.",
+                                    title="Как работает Вопрос/ответ",
+                                    color="gray",
+                                    withCloseButton=False,
+                                ),
+                                dmc.Space(h=10),
                                 dmc.Stack([
                                     dmc.Textarea(
                                         id="chat-question", placeholder="Задайте вопрос по ФС…", autosize=True, minRows=2),
@@ -257,6 +264,13 @@ main = dmc.AppShellMain(
                             p="md",
                             radius="md",
                             children=[
+                                dmc.Alert(
+                                    "Функция анализирует ФС по стандартным разделам: последовательно проходит документ, оценивает полноту каждого раздела и формирует краткое резюме. Прогресс ниже. После завершения можно открыть детали по разделу и выгрузить результат в Excel.",
+                                    title="Как работает анализ",
+                                    color="gray",
+                                    withCloseButton=False,
+                                ),
+                                dmc.Space(h=10),
                                 dmc.Group([
                                     dmc.Group([
                                         dmc.Button("Анализировать ФС", id="analyze-fs",
@@ -349,6 +363,13 @@ main = dmc.AppShellMain(
                             p="md",
                             radius="md",
                             children=[
+                                dmc.Alert(
+                                    "Ищет документы с похожим разделом ‘Предмет разработки’ относительно выбранной ФС. Нажмите ‘Поиск’, затем откройте любой найденный документ для предпросмотра.",
+                                    title="Как работает поиск похожих (экспериментальная функция)",
+                                    color="yellow",
+                                    withCloseButton=False,
+                                ),
+                                dmc.Space(h=10),
                                 dmc.Group([
                                     dmc.Button(
                                         "Поиск",
@@ -403,6 +424,13 @@ main = dmc.AppShellMain(
                             p="md",
                             radius="md",
                             children=[
+                                dmc.Alert(
+                                    "Показывает Markdown выбранной ФС. Если разделы распознаны, отображается их содержимое по порядку.",
+                                    title="Как работает предпросмотр",
+                                    color="gray",
+                                    withCloseButton=False,
+                                ),
+                                dmc.Space(h=10),
                                 dmc.Box(
                                     children=[
                                         dmc.TypographyStylesProvider(
@@ -1014,7 +1042,7 @@ def set_finding_similar_flag(n_clicks):
 )
 def reflect_find_similar_button(is_busy):
     busy = bool(is_busy)
-    label = "Ищем…" if busy else "Найти схожие ФС"
+    label = "Ищем…" if busy else "Поиск"
     return busy, busy, label
 
 
