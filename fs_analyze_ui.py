@@ -426,9 +426,9 @@ def _render_table(rows: List[Dict[str, Any]]):
         if not overall_text or overall_text == "—":
             overall_cell = dmc.Text("—")
         else:
-            if overall_text.startswith("полностью"):
+            if overall_text.startswith("Полностью"):
                 color = "green"
-            elif overall_text.startswith("частично"):
+            elif overall_text.startswith("Частично"):
                 color = "orange"
             else:
                 color = "red"
