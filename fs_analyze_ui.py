@@ -1,6 +1,5 @@
 
 from rag_engine import warmup, search_documents
-from fs_analyze_agent import analyze_fs_sections
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from dotenv import load_dotenv
@@ -107,10 +106,7 @@ def _parse_upload(contents: str, filename: str) -> Tuple[bool, str]:
 
 
 COL_SECTION = "Раздел"
-COL_STATUS = "Статус"
-COL_ACTIONS = "Действия"
-COL_ANALYSIS = "Анализ"
-COL_DETAILS_MARKDOWN = "Детали"
+COL_STATUS = "Предпросмотр"
 COL_OVERALL = "Оценка"
 
 
@@ -134,23 +130,16 @@ def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None
         content = sections_from_md.get(title)
         found = bool(content)
         section_payload[title] = content or "Раздел не найден"
-        a_summary = None
         a_overall = None
-        a_details_markdown = None
         if analysis and isinstance(analysis, dict):
             a_data = analysis.get(title) or {}
             if isinstance(a_data, dict):
-                a_summary = a_data.get("summary")
                 a_overall = a_data.get("overall_assessment")
-                a_details_markdown = a_data.get("details_markdown")
         rows.append({
             "#": i,
             COL_SECTION: title,
             COL_STATUS: "Найден" if found else "Не найден",
-            COL_ANALYSIS: a_summary or ("—"),
             COL_OVERALL: a_overall or ("—"),
-            COL_DETAILS_MARKDOWN: a_details_markdown or ("—"),
-            COL_ACTIONS: "Просмотр" if found else "—",
         })
     return rows, section_payload
 
@@ -279,24 +268,23 @@ main = dmc.AppShellMain(
                                 ], justify="space-between"),
                                 dmc.Space(h=8),
                                 dmc.Stack([
-                                    dmc.Progress(id="analysis-progress-bar", value=0, color="blue", size="md"),
-                                    dmc.Text(id="analysis-progress-text", size="sm", c="dimmed"),
+                                    dmc.Progress(
+                                        id="analysis-progress-bar", value=0, color="blue", size="md"),
+                                    dmc.Text(id="analysis-progress-text",
+                                             size="sm", c="dimmed"),
                                 ], gap="xs"),
                                 dmc.Space(h=10),
-                                dcc.Loading(
-                                    id="analysis-loading",
-                                    type="default",
-                                    children=dmc.Box(
-                                        id="sections-table-wrap",
-                                        style={"overflowX": "auto"},
-                                        children=[],
-                                    ),
+                                dmc.Box(
+                                    id="sections-table-wrap",
+                                    style={"overflowX": "auto"},
+                                    children=[],
                                 ),
                                 dcc.Download(id="download-excel"),
                                 dcc.Store(id="sections-payload"),
                                 dcc.Store(id="analysis-result"),
                                 dcc.Store(id="analysis-job-id"),
-                                dcc.Interval(id="analysis-progress-tick", interval=800, disabled=True, n_intervals=0),
+                                dcc.Interval(
+                                    id="analysis-progress-tick", interval=800, disabled=True, n_intervals=0),
                             ],
                         ),
 
@@ -427,14 +415,11 @@ def _render_table(rows: List[Dict[str, Any]]):
         dmc.TableTh(COL_SECTION),
         dmc.TableTh(COL_STATUS),
         dmc.TableTh(COL_OVERALL),
-        dmc.TableTh(COL_ANALYSIS),
-        # dmc.TableTh(COL_DETAILS_MARKDOWN),
-        dmc.TableTh(COL_ACTIONS),
     ]))
     body_rows = []
     for r in rows:
         ok = (r.get(COL_STATUS) == "Найден")
-        status = dmc.Badge("Найден", color="green", variant="light") if ok else dmc.Badge(
+        status = dmc.Button("Найден", color="green", variant="light", id={"type": "view-btn", "section": r.get(COL_SECTION)}) if ok else dmc.Button(
             "Не найден", color="red", variant="light")
         # Overall assessment badge
         overall_text = (r.get(COL_OVERALL) or "").strip().lower()
@@ -447,42 +432,14 @@ def _render_table(rows: List[Dict[str, Any]]):
                 color = "orange"
             else:
                 color = "red"
-            overall_cell = dmc.Badge(
-                r.get(COL_OVERALL), color=color, variant="light")
-        analysis_text = (r.get(COL_ANALYSIS) or "").strip()
-        if not analysis_text or analysis_text == "—":
-            analysis_cell = dmc.Text("—")
-        else:
-            green = analysis_text.lower().startswith(
-                "ok") or analysis_text.lower().startswith("ок")
-            # Truncate label, full text will be in modal
-            trimmed = analysis_text
-            max_len = 40
-            if len(trimmed) > max_len:
-                trimmed = trimmed[: max_len - 1].rstrip() + "…"
-            analysis_cell = dmc.Button(
-                trimmed,
-                variant="light",
-                color=("green" if green else "orange"),
-                size="xs",
-                id={"type": "analysis-btn", "section": r.get(COL_SECTION)},
-            )
-        action = (
-            dmc.Button(
-                "Просмотр",
-                variant="light",
-                size="xs",
-                id={"type": "view-btn", "section": r.get(COL_SECTION)},
-            ) if ok else dmc.Text("—")
-        )
+            overall_cell = dmc.Button(
+                r.get(COL_OVERALL), color=color, variant="light", size="xs",
+                id={"type": "analysis-btn", "section": r.get(COL_SECTION)})
         body_rows.append(dmc.TableTr([
             dmc.TableTd(str(r.get("#", ""))),
             dmc.TableTd(r.get(COL_SECTION, "")),
             dmc.TableTd(status),
             dmc.TableTd(overall_cell),
-            dmc.TableTd(analysis_cell),
-            # dmc.TableTd(dcc.Markdown(details_markdown) if details_markdown and details_markdown != "—" else "—"),
-            dmc.TableTd(action),
         ]))
     body = dmc.TableTbody(body_rows)
     return dmc.Table(highlightOnHover=True, striped=True, verticalSpacing="sm", horizontalSpacing="md", children=[header, body])
@@ -648,16 +605,19 @@ def start_analysis_job(n_clicks, file_name):
         # Build sections snapshot for the worker
         try:
             md = read_markdown(file_name)
-            sections_from_md = get_fs(str(CFG.md_dir / f"{file_name}.md")) if md and not md.startswith("Файл Markdown не найден") else {}
+            sections_from_md = get_fs(str(
+                CFG.md_dir / f"{file_name}.md")) if md and not md.startswith("Файл Markdown не найден") else {}
         except Exception:
             sections_from_md = {}
 
         job_id = f"{file_name}:{int(time.time()*1000)}"
         # Reset progress in store
         with PROGRESS_LOCK:
-            ANALYSIS_PROGRESS[job_id] = {"done": 0, "total": len(get_section_titles()), "current": "", "status": "running", "file": file_name}
+            ANALYSIS_PROGRESS[job_id] = {"done": 0, "total": len(
+                get_section_titles()), "current": "", "status": "running", "file": file_name}
         # Launch worker thread
-        t = Thread(target=_run_analysis_worker, args=(job_id, file_name, sections_from_md), daemon=True)
+        t = Thread(target=_run_analysis_worker, args=(
+            job_id, file_name, sections_from_md), daemon=True)
         t.start()
         return job_id, False, 0, "Подготовка…", {}, "Анализ запущен", "blue"
     except Exception as e:
@@ -691,7 +651,7 @@ def poll_analysis_progress(_n, job_id, file_name):
         current = st.get("current") or ""
         status = st.get("status") or "running"
         value = int((done / total) * 100) if total else 0
-        text = f"{done}/{total} — Анализ раздела \"{current}\"" if not done else "Подготовка…"
+        text = f"{done}/{total} — Анализ раздела \"{current}\"" if current else "Подготовка…"
 
         if status == "done":
             analysis = ANALYSIS_RESULTS.get(job_id) or {}
@@ -907,7 +867,7 @@ def export_analysis_excel(n_clicks, file_name, analysis):
         from pathlib import Path as _Path
 
         df = _pd.DataFrame(rows)
-        keep_cols = ['#', COL_SECTION, COL_STATUS, COL_OVERALL, COL_ANALYSIS]
+        keep_cols = ['#', COL_SECTION, COL_STATUS, COL_OVERALL]
         df = df[[c for c in keep_cols if c in df.columns]]
 
         buf = _io.BytesIO()
