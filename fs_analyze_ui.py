@@ -1,6 +1,6 @@
 
 from rag_engine import warmup, search_documents
-from fs_similarity import find_similar_subjects
+from fs_similarity import find_similar_subjects, llm_compare_subjects, SUBJECT_SECTION_TITLE
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from dotenv import load_dotenv
@@ -379,15 +379,8 @@ main = dmc.AppShellMain(
                                     ),
                                 ], justify="flex-start"),
                                 dmc.Space(h=10),
-                                dmc.ScrollArea(
-                                    offsetScrollbars=True,
-                                    type="auto",
-                                    h=500,
-                                    children=[
-                                        dmc.Box(
-                                            id="similar-subjects-table-wrap")
-                                    ],
-                                ),
+                                dmc.Box(
+                                    id="similar-subjects-table-wrap")
                             ],
                         ),
                     ],
@@ -975,22 +968,32 @@ def _render_similar_table(rows):
         dmc.TableTh("#"),
         dmc.TableTh("Название документа"),
         dmc.TableTh("Процент совпадения"),
+        dmc.TableTh("Сходства"),
+        dmc.TableTh("Отличия"),
     ]))
     body_rows = []
     for i, r in enumerate(rows or [], start=1):
         name = r.get("file_name", "")
         score = r.get("score", 0)
         pct = round(float(score) * 100, 2)
-        link_btn = dmc.Button(
-            name,
-            variant="subtle",
-            color="blue",
-            id={"type": "open-similar-doc", "file": name},
+        sim_txt = (r.get("llm_similar") or "—")
+        diff_txt = (r.get("llm_diff") or "—")
+        link_btn = dmc.Tooltip(
+            dmc.Button(
+                name,
+                variant="subtle",
+                color="blue",
+                id={"type": "open-similar-doc", "file": name},
+                maw=250,
+            ),
+            label=name,
         )
         body_rows.append(dmc.TableTr([
             dmc.TableTd(str(i)),
-            dmc.TableTd(link_btn),
+            dmc.TableTd(link_btn, maw=300),
             dmc.TableTd(f"{pct}%"),
+            dmc.TableTd(sim_txt),
+            dmc.TableTd(diff_txt),
         ]))
     body = dmc.TableTbody(body_rows)
     table = dmc.Table(highlightOnHover=True, striped=True,
@@ -1014,8 +1017,26 @@ def on_find_similar_subjects(n_clicks, file_name):
             empty = dmc.Alert(
                 "Не найдено похожих ФС по разделу 'Предмет разработки'.", color="gray")
             return empty, []
-        table = _render_similar_table(matches)
-        return table, matches
+        # Load base subject text for current file
+        try:
+            base_sections = get_fs(str(CFG.md_dir / f"{file_name}.md"))
+            base_subject = (base_sections or {}).get(
+                SUBJECT_SECTION_TITLE) or ""
+        except Exception:
+            base_subject = ""
+        enriched: List[Dict[str, Any]] = []
+        for m in matches:
+            cand_text = (m.get("text") or "").strip()
+            sim, diff = ("—", "—")
+            if base_subject and cand_text:
+                sim, diff = llm_compare_subjects(base_subject, cand_text)
+            enriched.append({
+                **m,
+                "llm_similar": sim,
+                "llm_diff": diff,
+            })
+        table = _render_similar_table(enriched)
+        return table, enriched
     except Exception as e:
         log.exception("similar_subjects_failed")
         return dmc.Alert(f"Ошибка поиска похожих: {e}", color="red"), []

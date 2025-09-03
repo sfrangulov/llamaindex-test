@@ -84,7 +84,7 @@ def _load_subject_sections() -> List[Tuple[str, str]]:
     return results
 
 
-def find_similar_subjects(current_file_name: str, top_k: int = 5) -> List[Dict[str, object]]:
+def find_similar_subjects(current_file_name: str, top_k: int = 10) -> List[Dict[str, object]]:
     """Find top-K most similar FS documents by the 'Предмет разработки' section.
 
     Returns list of { file_name: str, score: float, text: str } sorted by score desc.
@@ -120,3 +120,52 @@ def find_similar_subjects(current_file_name: str, top_k: int = 5) -> List[Dict[s
         {"file_name": fname, "score": round(score, 4), "text": text}
         for (fname, score, text) in top
     ]
+
+
+def _truncate(text: str, limit: int = 180) -> str:
+    t = (text or "").strip()
+    if len(t) <= limit:
+        return t
+    return t[: max(0, limit - 1)].rstrip() + "…"
+
+
+def llm_compare_subjects(base_text: str, cand_text: str) -> tuple[str, str]:
+    """Return (similar_short, diff_short) via LLM based on two subject section texts.
+
+    Produces two concise phrases in Russian. Falls back to '—' on error.
+    """
+    try:
+        from llama_index.core import Settings as _Settings
+        # Build compact prompt with explicit format
+        base = _truncate(base_text, 1200)
+        cand = _truncate(cand_text, 1200)
+        prompt = (
+            "Сравни два фрагмента раздела 'Предмет разработки'.\n"
+            "Сравнивай только непосредственно предмет разработки.\n"
+            "Ответ строго в 2 строках и кратко (1–2 фразы на строку):\n"
+            "1) Схожи: <кратко по сути>\n"
+            "2) Отличаются: <кратко по сути>\n"
+            "Пиши на русском, без воды, без Markdown, без лишних пояснений.\n\n"
+            f"Текст A:\n{base}\n\nТекст B:\n{cand}\n"
+        )
+        import asyncio as _asyncio
+        resp = _asyncio.run(_Settings.llm.acomplete(prompt))
+        text = (getattr(resp, "text", None) or "").strip()
+        # Parse two lines heuristically
+        sim, diff = "", ""
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for ln in lines:
+            low = ln.lower()
+            if not sim and (low.startswith("1) схожи") or low.startswith("схожи")):
+                sim = ln.split(":", 1)[-1].strip() if ":" in ln else ln
+            elif not diff and (low.startswith("2) отличаются") or low.startswith("отличаются")):
+                diff = ln.split(":", 1)[-1].strip() if ":" in ln else ln
+        sim = _truncate(sim or text, 200)
+        diff = _truncate(diff or "—", 200)
+        # Clean potential numbering remnants
+        sim = sim.lstrip("1234567890). -:").strip() or "—"
+        diff = diff.lstrip("1234567890). -:").strip() or "—"
+        return sim, diff
+    except Exception:
+        return "—", "—"
+
