@@ -115,6 +115,7 @@ def get_layout() -> Any:
             ),
             # Stores
             dcc.Store(id="dlg-history", data=[]),
+            dcc.Store(id="dlg-busy", data=False),
             # Chat-level document preview modal
             dmc.Modal(
                 id="dlg-doc-preview-modal",
@@ -141,6 +142,29 @@ def get_layout() -> Any:
 
 
 def register_callbacks(app: dash.Dash, search_documents):
+    # Mark busy when send is clicked (fast UI feedback)
+    @app.callback(
+        Output("dlg-busy", "data"),
+        Input("dlg-send", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def set_busy(n):
+        if not n:
+            return dash.no_update
+        return True
+
+    # Reflect busy state on the send button
+    @app.callback(
+        Output("dlg-send", "loading"),
+        Output("dlg-send", "disabled"),
+        Output("dlg-send", "children"),
+        Input("dlg-busy", "data"),
+    )
+    def reflect_busy(busy):
+        is_busy = bool(busy)
+        label = "Спросить…" if is_busy else "Спросить"
+        return is_busy, is_busy, label
+
     @app.callback(
         Output("dlg-history", "data"),
         Output("dlg-input", "value"),
@@ -191,6 +215,15 @@ def register_callbacks(app: dash.Dash, search_documents):
             history = list(history or [])
             history.append({"role": "assistant", "text": f"Ошибка: {e}"})
             return history, dash.no_update
+
+    # Reset busy once history updates (success or error)
+    @app.callback(
+        Output("dlg-busy", "data", allow_duplicate=True),
+        Input("dlg-history", "data"),
+        prevent_initial_call=True,
+    )
+    def reset_busy(_):
+        return False
 
     @app.callback(
         Output("dlg-thread", "children"),
