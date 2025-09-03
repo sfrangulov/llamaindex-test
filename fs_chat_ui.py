@@ -82,7 +82,6 @@ def get_layout() -> Any:
                         "Диалоговый режим с RAG: задавайте вопросы, ответы формируются по базе базе знаний. Нажмите на имея файла в источниках, чтобы открыть предпросмотр.",
                         title="Чат",
                         color="gray",
-                        withCloseButton=False,
                     ),
                     dmc.Space(h=10),
                     dmc.ScrollArea(
