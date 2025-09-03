@@ -113,7 +113,7 @@ COL_OVERALL = "Оценка"
 def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
     """Return rows for DataTable and a dict of section->content (for modal).
 
-    analysis: optional mapping section-> {summary, ok, issues_count, details_markdown}
+    analysis: optional mapping section-> {summary, details_markdown}
     """
     try:
         md = read_markdown(file_name)
@@ -138,7 +138,7 @@ def _build_sections_table(file_name: str, analysis: Dict[str, Any] | None = None
         rows.append({
             "#": i,
             COL_SECTION: title,
-            COL_STATUS: "Найден" if found else "Не найден",
+            COL_STATUS: "НАЙДЕН" if found else "НЕ НАЙДЕН",
             COL_OVERALL: a_overall or ("—"),
         })
     return rows, section_payload
@@ -418,22 +418,22 @@ def _render_table(rows: List[Dict[str, Any]]):
     ]))
     body_rows = []
     for r in rows:
-        ok = (r.get(COL_STATUS) == "Найден")
-        status = dmc.Button("Найден", color="green", variant="light", id={"type": "view-btn", "section": r.get(COL_SECTION)}) if ok else dmc.Button(
-            "Не найден", color="red", variant="light")
+        ok = (r.get(COL_STATUS) == "НАЙДЕН")
+        status = dmc.Button("НАЙДЕН", color="green", variant="light", id={"type": "view-btn", "section": r.get(COL_SECTION)}) if ok else dmc.Button(
+            "НЕ НАЙДЕН", color="red", variant="light")
         # Overall assessment badge
-        overall_text = (r.get(COL_OVERALL) or "").strip().lower()
+        overall_text = (r.get(COL_OVERALL) or "")
         if not overall_text or overall_text == "—":
             overall_cell = dmc.Text("—")
         else:
-            if overall_text.startswith("Полностью"):
+            if overall_text.startswith("ПОЛНОСТЬЮ"):
                 color = "green"
-            elif overall_text.startswith("Частично"):
+            elif overall_text.startswith("ЧАСТИЧНО"):
                 color = "orange"
             else:
                 color = "red"
             overall_cell = dmc.Button(
-                r.get(COL_OVERALL), color=color, variant="light", size="xs",
+                overall_text, color=color, variant="light", size="xs",
                 id={"type": "analysis-btn", "section": r.get(COL_SECTION)})
         body_rows.append(dmc.TableTr([
             dmc.TableTd(str(r.get("#", ""))),

@@ -178,10 +178,8 @@ def analyze_fs_sections(
 
     Returns mapping: section_title -> {
         'ok': bool,
-        'issues_count': int,
-        'summary': str,
         'details_markdown': str,
-        'overall_assessment': str,  # один из: "полностью соответствует" | "частично соответствует" | "не соответствует"
+        'overall_assessment': str,  # один из: "Полностью соответствует" | "Частично соответствует" | "Не соответствует"
     }
     """
     # Ensure settings and questions are ready
@@ -207,8 +205,6 @@ def analyze_fs_sections(
             )
             results[title] = {
                 "ok": False,
-                "issues_count": 1,
-                "summary": "Раздел отсутствует",
                 "details_markdown": details,
             }
             done += 1
@@ -230,7 +226,7 @@ def analyze_fs_sections(
             "Если обнаружены проблемы, перечисли их в виде пунктов.\n"
             "Дай итоговую общую оценку соответствия раздела требованиям одним из вариантов: 'Полностью соответствует', 'Частично соответствует', 'Не соответствует'.\n"
             "Критерии: 'Полностью соответствует' — все критичные вопросы закрыты ('Да') и нет существенных замечаний; 'Частично соответствует' — есть неясности или мелкие замечания; 'Не соответствует' — есть существенные пробелы, ответы 'Нет' по ключевым вопросам или раздел явно слабый.\n"
-            "Верни строго JSON без пояснений со следующими полями: ok (bool), issues_count (int), summary (string), details_markdown (string в Markdown), overall_assessment (string, одно из указанных значений).\n\n"
+            "Верни строго JSON без пояснений со следующими полями: details_markdown (string в Markdown), overall_assessment (string, одно из указанных значений).\n\n"
             f"Раздел: {title}\n\n"
             "Текст раздела (Markdown):\n" + content + "\n\n"
             "Контрольные вопросы (Markdown):\n" + questions_md + "\n\n"
@@ -248,46 +244,15 @@ def analyze_fs_sections(
             log.warning("Section analysis failed", section=title, error=e)
             data = {}
 
-        ok = bool(data.get("ok")) if isinstance(data, dict) else False
-        issues_count = int(data.get("issues_count", 0)
-                           or 0) if isinstance(data, dict) else 0
         details_md = (data.get("details_markdown") or "(нет деталей)") if isinstance(
             data, dict) else "(анализ недоступен)"
-        if not data:
-            # Fallback heuristic: if content length is small, likely issues
-            ok = len(content) > 200
-            issues_count = 0 if ok else 1
-            details_md = f"### {title}\n\n(Не удалось выполнить автоматический анализ. Проверьте раздел вручную.)"
-
-        summary = data.get("summary") if isinstance(data, dict) else None
-        if not summary:
-            if ok and issues_count == 0:
-                summary = "OK"
-            elif issues_count:
-                summary = f"⚠️ {issues_count} замечания"
-            else:
-                summary = "Есть замечания"
 
         # Normalize/add overall assessment
         overall = (data.get("overall_assessment")
                    if isinstance(data, dict) else None) or ""
-        overall_norm = (overall or "").strip().lower()
-        if not overall_norm:
-            # Derive from ok/issues_count if model didn't return the field
-            if not content:
-                overall_norm = "не соответствует"
-            elif ok and issues_count == 0:
-                overall_norm = "полностью соответствует"
-            elif ok and issues_count > 0:
-                overall_norm = "частично соответствует"
-            else:
-                overall_norm = "частично соответствует" if len(
-                    content) > 200 else "не соответствует"
+        overall_norm = (overall or "").strip().upper()
 
         results[title] = {
-            "ok": ok,
-            "issues_count": issues_count,
-            "summary": summary,
             "details_markdown": details_md,
             "overall_assessment": overall_norm,
         }
