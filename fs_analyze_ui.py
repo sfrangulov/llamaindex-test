@@ -4,6 +4,7 @@ from fs_similarity import find_similar_subjects, llm_compare_subjects, SUBJECT_S
 from fs_utils import get_fs, get_section_titles, split_by_sections_fs
 from storage import CFG, ensure_dirs, add_docx_to_store, read_markdown
 from dotenv import load_dotenv
+from fs_chat_ui import get_layout as chat_get_layout, register_callbacks as chat_register_callbacks
 import json
 import os
 import base64
@@ -473,7 +474,18 @@ header = dmc.AppShellHeader(
                 h="100%",
                 px="md",
             ),
-            theme_toggle,
+            dmc.Group([
+                dmc.SegmentedControl(
+                    id="top-nav",
+                    value="analysis",
+                    data=[
+                        {"label": "Анализ", "value": "analysis"},
+                        {"label": "Чат", "value": "chat"},
+                    ],
+                    size="sm",
+                ),
+                theme_toggle,
+            ], gap="md"),
         ],
         justify="space-between",
         style={"flex": 1},
@@ -490,6 +502,19 @@ app.layout = dmc.MantineProvider(dmc.AppShell(
 
 # --------- Callbacks ---------
 
+# Wrap analysis content and add chat section; reuse existing analysis children
+_analysis_section = dmc.Box(id="analysis-section", children=main.children)
+_chat_section = dmc.Box(id="chat-section", style={"display": "none"}, children=[chat_get_layout()])
+main = dmc.AppShellMain(children=[_analysis_section, _chat_section])
+
+chat_register_callbacks(app, search_documents)
+
+# Rebuild layout with the updated main containing nav sections
+app.layout = dmc.MantineProvider(dmc.AppShell(
+    children=[header, main],
+    header={"height": 60},
+    padding="md",
+), theme=THEME)
 
 def _render_table(rows: List[Dict[str, Any]]):
     header = dmc.TableThead(dmc.TableTr([
@@ -528,6 +553,17 @@ def _render_table(rows: List[Dict[str, Any]]):
 
 
 """Duplicate standalone definition of analysis modal removed: it's now inline in layout."""
+
+
+@app.callback(
+    Output("analysis-section", "style"),
+    Output("chat-section", "style"),
+    Input("top-nav", "value"),
+)
+def toggle_sections(nav_value):
+    if nav_value == "chat":
+        return {"display": "none"}, {"display": "block"}
+    return {"display": "block"}, {"display": "none"}
 
 
 @app.callback(
@@ -1131,3 +1167,4 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "7861"))
     app.run(host=host, port=port, debug=False)
+
