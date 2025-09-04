@@ -56,6 +56,7 @@ def _progress_update(job_id: str, done: int, total: int, current: str):
 def _run_analysis_worker(job_id: str, file_name: str, sections_from_md: Dict[str, str]):
     try:
         from fs_analyze_agent import analyze_fs_sections
+        from results_store import init_results_db, save_fs_analysis
 
         def cb(done: int, total: int, current: str):
             _progress_update(job_id, done, total, current)
@@ -70,7 +71,27 @@ def _run_analysis_worker(job_id: str, file_name: str, sections_from_md: Dict[str
                 "file": file_name,
             }
 
+        # Measure runtime
+        t0 = time.time()
         analysis = analyze_fs_sections(sections_from_md, progress_cb=cb)
+        runtime_ms = int((time.time() - t0) * 1000)
+
+        # Persist results (best-effort)
+        try:
+            init_results_db()
+            save_fs_analysis(
+                file_name=file_name,
+                analysis=analysis,
+                job_id=job_id,
+                runtime_ms=runtime_ms,
+                metadata={
+                    "source": "fs_analyze_ui",
+                    "sections_total": len(get_section_titles()),
+                },
+            )
+        except Exception:
+            log.exception("save_analysis_failed")
+
         with PROGRESS_LOCK:
             ANALYSIS_RESULTS[job_id] = analysis
             st = ANALYSIS_PROGRESS.get(job_id) or {}
