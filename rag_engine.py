@@ -5,6 +5,9 @@ from llama_index.core.schema import MetadataMode
 from llama_index.core.response_synthesizers import get_response_synthesizer
 from llama_index.core.node_parser import MarkdownNodeParser
 from llama_index.core.prompts import PromptTemplate
+from llama_index.core.memory import Memory
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.tools import FunctionTool
 from llama_index.core.workflow import (
     Workflow,
     Event,
@@ -70,6 +73,56 @@ TOP_K = int(os.getenv("TOP_K", 10))
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 
 
+# ---------------------------- Conversational Memory ----------------------------
+
+# Global memory for chat. For multi-user, key by session/user id.
+MEMORY: Memory | None = None
+AGENT: FunctionAgent | None = None
+
+
+def _ensure_memory() -> Memory | None:
+    """Lazy-init LlamaIndex Memory for conversational context."""
+    global MEMORY
+    if MEMORY is not None:
+        return MEMORY
+    try:
+        MEMORY = Memory.from_defaults(
+            session_id="chat_default",
+            token_limit=20000,
+            chat_history_token_ratio=0.7,
+            token_flush_size=2000,
+            insert_method="user",
+        )
+    except Exception:
+        MEMORY = None
+    return MEMORY
+
+
+def reset_memory() -> None:
+    """Reset global chat memory (best-effort sync wrapper)."""
+    mem = _ensure_memory()
+    if mem is None:
+        return
+    import asyncio
+
+    async def _do():
+        try:
+            await mem.areset()
+        except Exception:
+            pass
+
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're in an event loop (e.g., async context), schedule without blocking
+        loop.create_task(_do())
+    except RuntimeError:
+        # No running loop; run synchronously
+        try:
+            asyncio.run(_do())
+        except Exception:
+            pass
+
+
 def configure_settings() -> None:
     """Init global Settings once (embedder, LLM, parser, transformations)."""
     configure_settings_gemini()
@@ -103,8 +156,6 @@ def configure_settings_local() -> None:
     Settings.ranker = SentenceTransformerRerank(
         model="DiTy/cross-encoder-russian-msmarco", top_n=max(10, TOP_K)
     )  # "cross-encoder/ms-marco-MiniLM-L-2-v2"
-    # Settings.llm = HuggingFaceLLM(
-    #    model_name="unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit", )
     Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
 
 
@@ -127,6 +178,75 @@ def _build_sources(response) -> List[Dict[str, Any]]:
         )
         sources.sort(key=lambda x: x["score"] or 0, reverse=True)
     return sources
+
+
+def _resp_text(res: object) -> str:
+    """Extract text from common LlamaIndex agent/LLM responses."""
+    if res is None:
+        return ""
+    if isinstance(res, str):
+        return res
+    for attr in ("output", "text", "message", "response"):
+        val = getattr(res, attr, None)
+        if isinstance(val, str):
+            return val
+        if getattr(val, "text", None):
+            return str(getattr(val, "text"))
+    return str(res)
+
+
+async def _run_rag_workflow(query: str, file_name: str | None) -> Dict[str, Any]:
+    """Run the existing RAG workflow and return the payload dict."""
+    wf = RagWorkflow()
+    try:
+        result: Dict[str, Any] = await wf.run(input={"query": query, "file_name": file_name})
+    except Exception as e:
+        log.exception("Workflow failed, returning empty result: %s", e)
+        result = {"answer": "", "sources": []}
+    return result
+
+
+def _ensure_agent() -> FunctionAgent | None:
+    """Initialize and cache a FunctionAgent with a kb_search tool and memory."""
+    global AGENT
+    if AGENT is not None:
+        return AGENT
+
+    async def _kb_search_tool(query: str, file_name: str | None = None) -> str:
+        """Tool: run the RAG pipeline and return strict JSON string."""
+        payload = await _run_rag_workflow(query, file_name)
+        return json.dumps(payload, ensure_ascii=False)
+
+    try:
+        tools = [
+            FunctionTool.from_defaults(
+                fn=_kb_search_tool,
+                name="kb_search",
+                description=(
+                    "Искать ответ по базе знаний. Обязательно вызывать для каждого запроса. "
+                    "Параметры: query (строка), file_name (опционально). Возвращает JSON со строкой 'answer' и списком 'sources'."
+                ),
+            )
+        ]
+    except Exception:
+        tools = []
+
+    system_prompt = (
+        "Ты чат-ассистент по базе знаний. Всегда вызывай инструмент kb_search с текущим вопросом "
+        "(и file_name если задан) и возвращай строго JSON, КОТОРЫЙ ВЕРНУЛ kb_search, без изменений."
+    )
+
+    try:
+        AGENT = FunctionAgent.from_tools(
+            tools=tools,
+            llm=Settings.llm,
+            memory=_ensure_memory(),
+            verbose=False,
+            system_prompt=system_prompt,
+        )
+    except Exception:
+        AGENT = None
+    return AGENT
 
 
 # ---------------------------- Workflow Events ----------------------------
@@ -257,15 +377,26 @@ async def search_documents(
     *, file_name: str | None = None,
 ) -> str:
     """Search and return JSON answer + sources using a Workflow pipeline."""
-
     t0 = time.time()
-    # Run the workflow end-to-end
-    wf = RagWorkflow()
-    try:
-        result: Dict[str, Any] = await wf.run(input={"query": query, "file_name": file_name})
-    except Exception as e:
-        log.exception("Workflow failed, returning empty result: %s", e)
-        result = {"answer": "", "sources": []}
+    agent = _ensure_agent()
+    result: Dict[str, Any]
+    if agent is not None:
+        try:
+            # Let the agent manage memory; pass file_name hint inline if present
+            user_query = query if not file_name else f"{query}\n\n[file_name={file_name}]"
+            resp = await agent.run(user_query, memory=_ensure_memory())
+            txt = _resp_text(resp)
+            data = json.loads((txt or "").strip() or "{}")
+            if isinstance(data, dict) and "answer" in data and "sources" in data:
+                result = data
+            else:
+                # Fallback to direct RAG if agent returned unexpected format
+                result = await _run_rag_workflow(query, file_name)
+        except Exception as e:
+            log.warning("agent_run_failed", error=e)
+            result = await _run_rag_workflow(query, file_name)
+    else:
+        result = await _run_rag_workflow(query, file_name)
 
     latency = int(time.time() - t0)
     log.debug("Workflow done.", query=query, latency=latency, answer=result.get("answer", "")[:50],
@@ -280,6 +411,8 @@ def start(
     """Warm heavy parts to reduce first-request latency."""
     ensure_dirs()
     configure_settings()
+    _ensure_memory()
+    _ensure_agent()
     if ensure_index:
         try:
             _ = get_index()
