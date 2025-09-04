@@ -1,7 +1,8 @@
 from typing import List, Dict, Tuple
+import re
 
-import numpy as np
 from llama_index.core import Settings
+from llama_index.core import Document, VectorStoreIndex
 
 from fs_utils import get_fs
 from storage import CFG, list_storage_files, read_markdown
@@ -10,53 +11,7 @@ from storage import CFG, list_storage_files, read_markdown
 SUBJECT_SECTION_TITLE = "Предмет разработки"
 
 
-def _cosine(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity between two vectors; returns 0.0 if invalid."""
-    try:
-        da = float(np.linalg.norm(a))
-        db = float(np.linalg.norm(b))
-        eps = 1e-12
-        if da < eps or db < eps:
-            return 0.0
-        return float(np.dot(a, b) / (da * db))
-    except Exception:
-        return 0.0
-
-
-def _embed_texts(texts: List[str]) -> List[np.ndarray]:
-    """Embed a list of texts using the configured embedder.
-
-    Falls back across common LlamaIndex APIs to stay compatible.
-    """
-    em = Settings.embed_model
-    if not texts:
-        return []
-    # Best-effort: prefer batch APIs when available
-    try:
-        if hasattr(em, "get_text_embedding_batch"):
-            vecs = em.get_text_embedding_batch(texts)
-        elif hasattr(em, "embed_query") and callable(getattr(em, "embed_query")):
-            vecs = [em.embed_query(t) for t in texts]
-        elif hasattr(em, "get_text_embedding") and callable(getattr(em, "get_text_embedding")):
-            vecs = [em.get_text_embedding(t) for t in texts]
-        else:
-            # Last resort: single-call attribute variants
-            fn = getattr(em, "embed", None) or getattr(em, "__call__", None)
-            if fn:
-                vecs = [fn(t) for t in texts]
-            else:
-                vecs = [[] for _ in texts]
-    except Exception:
-        vecs = [[] for _ in texts]
-    # Normalize to numpy arrays
-    out: List[np.ndarray] = []
-    for v in vecs:
-        try:
-            arr = np.asarray(v, dtype=float).reshape(-1)
-        except Exception:
-            arr = np.zeros((0,), dtype=float)
-        out.append(arr)
-    return out
+# NOTE: manual embedding/cosine utilities removed in favor of LlamaIndex's VectorStoreIndex
 
 
 def _load_subject_sections() -> List[Tuple[str, str]]:
@@ -90,6 +45,7 @@ def find_similar_subjects(current_file_name: str, top_k: int = 10) -> List[Dict[
     if not current_file_name:
         return []
     all_sections = _load_subject_sections()
+
     # Extract target text
     target_text = None
     for fname, text in all_sections:
@@ -99,25 +55,42 @@ def find_similar_subjects(current_file_name: str, top_k: int = 10) -> List[Dict[
     if not target_text:
         return []
 
-    # Build embeddings for target and candidates (excluding self)
-    cands = [(fname, text) for (fname, text) in all_sections if fname != current_file_name]
-    if not cands:
-        return []
-    target_vec = _embed_texts([target_text])[0]
-    cand_texts = [t for (_, t) in cands]
-    cand_vecs = _embed_texts(cand_texts)
-
-    scored: List[Tuple[str, float, str]] = []
-    for (fname, text), vec in zip(cands, cand_vecs):
-        score = _cosine(target_vec, vec)
-        scored.append((fname, float(score), text))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    top = scored[: max(1, int(top_k))]
-    return [
-        {"file_name": fname, "score": round(score, 4), "text": text}
-        for (fname, score, text) in top
+    # Build an in-memory VectorStoreIndex over candidate sections using LlamaIndex
+    candidates: List[Tuple[str, str]] = [
+        (fname, text) for (fname, text) in all_sections if fname != current_file_name and text.strip()
     ]
+    if not candidates:
+        return []
+
+    docs: List[Document] = [
+        Document(text=text, metadata={"file_name": fname, "section": SUBJECT_SECTION_TITLE})
+        for fname, text in candidates
+    ]
+    # Use global Settings (embed model, etc.) implicitly
+    try:
+        index = VectorStoreIndex.from_documents(docs)
+        retriever = index.as_retriever(similarity_top_k=max(1, int(top_k)))
+        results = retriever.retrieve(target_text)
+    except Exception:
+        # Fallback: empty on failure (avoid partial/manual cosine to keep behavior simple)
+        return []
+
+    out: List[Dict[str, object]] = []
+    for r in results:
+        # r.node.get_content() returns the text; metadata were attached to the Document
+        meta = r.node.metadata or {}
+        fname = meta.get("file_name")
+        if not fname or not isinstance(fname, str):
+            continue
+        out.append({
+            "file_name": fname,
+            "score": round(float(r.score or 0.0), 4),
+            "text": r.node.get_content(),
+        })
+
+    # Ensure stable ordering by score desc
+    out.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    return out
 
 
 def _truncate(text: str, limit: int = 180) -> str:
@@ -127,43 +100,57 @@ def _truncate(text: str, limit: int = 180) -> str:
     return t[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _build_compare_prompt(base_text: str, cand_text: str) -> str:
+    base = _truncate(base_text, 1200)
+    cand = _truncate(cand_text, 1200)
+    return (
+        "Сравни два фрагмента раздела 'Предмет разработки'.\n"
+        "Сравнивай только непосредственно предмет разработки.\n"
+        "Ответ строго в 2 строках и кратко (1–2 фразы на строку):\n"
+        "1) Схожи: <кратко по сути>\n"
+        "2) Отличаются: <кратко по сути>\n"
+        "Пиши на русском, без воды, без Markdown, без лишних пояснений.\n\n"
+        f"Текст первой ФС:\n{base}\n\nТекст второй ФС:\n{cand}\n"
+    )
+
+
+def _parse_two_line_answer(text: str) -> tuple[str, str]:
+    """Extract 'Схожи' and 'Отличаются' short phrases from LLM text."""
+    text = (text or "").strip()
+    if not text:
+        return "—", "—"
+
+    # Try to capture lines beginning with the expected labels
+    sim_match = re.search(r"(?im)^\s*(?:1\)\s*)?схожи[^:]*:\s*(.*)$", text)
+    diff_match = re.search(r"(?im)^\s*(?:2\)\s*)?отличаются[^:]*:\s*(.*)$", text)
+
+    def _clean_fragment(s: str) -> str:
+        s = _truncate((s or "").strip() or "—", 200)
+        s = s.lstrip("1234567890). -:").strip() or "—"
+        return s
+
+    if sim_match or diff_match:
+        sim = _clean_fragment(sim_match.group(1)) if sim_match else "—"
+        diff = _clean_fragment(diff_match.group(1)) if diff_match else "—"
+        return sim, diff
+
+    # Fallback: use first two non-empty lines
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    first = lines[0] if lines else "—"
+    second = lines[1] if len(lines) > 1 else "—"
+    return _clean_fragment(first), _clean_fragment(second)
+
+
 def llm_compare_subjects(base_text: str, cand_text: str) -> tuple[str, str]:
     """Return (similar_short, diff_short) via LLM based on two subject section texts.
 
     Produces two concise phrases in Russian. Falls back to '—' on error.
     """
     try:
-        from llama_index.core import Settings as _Settings
-        # Build compact prompt with explicit format
-        base = _truncate(base_text, 1200)
-        cand = _truncate(cand_text, 1200)
-        prompt = (
-            "Сравни два фрагмента раздела 'Предмет разработки'.\n"
-            "Сравнивай только непосредственно предмет разработки.\n"
-            "Ответ строго в 2 строках и кратко (1–2 фразы на строку):\n"
-            "1) Схожи: <кратко по сути>\n"
-            "2) Отличаются: <кратко по сути>\n"
-            "Пиши на русском, без воды, без Markdown, без лишних пояснений.\n\n"
-            f"Текст A:\n{base}\n\nТекст B:\n{cand}\n"
-        )
-        import asyncio as _asyncio
-        resp = _asyncio.run(_Settings.llm.acomplete(prompt))
-        text = (getattr(resp, "text", None) or "").strip()
-        # Parse two lines heuristically
-        sim, diff = "", ""
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        for ln in lines:
-            low = ln.lower()
-            if not sim and (low.startswith("1) схожи") or low.startswith("схожи")):
-                sim = ln.split(":", 1)[-1].strip() if ":" in ln else ln
-            elif not diff and (low.startswith("2) отличаются") or low.startswith("отличаются")):
-                diff = ln.split(":", 1)[-1].strip() if ":" in ln else ln
-        sim = _truncate(sim or text, 200)
-        diff = _truncate(diff or "—", 200)
-        # Clean potential numbering remnants
-        sim = sim.lstrip("1234567890). -:").strip() or "—"
-        diff = diff.lstrip("1234567890). -:").strip() or "—"
-        return sim, diff
+        prompt = _build_compare_prompt(base_text, cand_text)
+        # Prefer the sync interface exposed by LlamaIndex LLMs
+        resp = Settings.llm.complete(prompt)
+        return _parse_two_line_answer(getattr(resp, "text", None) or "")
     except Exception:
         return "—", "—"
 

@@ -1,40 +1,82 @@
-# Copilot instructions for this repo
+# Repo AI Assistant Instructions
 
-Purpose: Make AI agents productive in this Dash + LlamaIndex app. Keep edits minimal, Russian text in UI, and JSON contracts stable.
+Purpose: Give AI/code assistants precise guidance for this project so changes stay consistent with our ingestion, indexing, and UI rendering flows.
 
-## Big picture
-- UI: single Dash app (`app.py`) with 3 tabs: Анализ (`fs_analyze_ui.py`), Чат (`fs_chat_ui.py`), Хранилище (`fs_storage_ui.py`).
-- RAG: `rag_engine.py` (LlamaIndex + Chroma) → reformulate → retrieve (optional file filter) → rerank → synthesize → JSON {answer, sources}.
-- Ingestion/storage: `storage.py` converts DOCX→Markdown via `md_reader.MarkItDownReader`, writes `data/markdown/`, upserts vectors in Chroma, lists/deletes files.
-- FS analyzer: `fs_analyze_agent.py` runs per-section checks using `fs_analyze/*` and `fs_utils.SECTION_TITLES`; results saved to SQLite (`db.py`).
+## Project snapshot
 
-## Startup and env
-- Entry: `python app.py` after installing `requirements.txt`. Main calls `rag_engine.start()`, `fs_analyze_agent.start()`, `db.start()`.
-- .env keys: Google GenAI for Gemini (if used). Important vars: `TOP_K`, `RERANK_ENABLED`, `DATA_PATH` (./attachments), `CHROMA_PATH` (./data/chroma_db), `CHROMA_COLLECTION`, `MD_DIR` (./data/markdown), `HOST`, `PORT`.
-- First run builds index from `attachments/*.docx` and writes Markdown to `data/markdown/`.
-
-## Workflows (how to use)
-- Add docs: drop `.docx` into `attachments/` or upload in “Анализ”. Internally uses `storage.add_docx_to_store()` (persist, write md, delete old vectors, insert new).
-- Analyze FS: button in “Анализ” → background worker → `fs_analyze_agent.analyze_fs_sections()` → `db.save_fs_analysis()`; polling via `ANALYSIS_PROGRESS`.
-- Ask questions: “Чат” and QA panel call `rag_engine.search_documents()`; pass `file_name` to scope retrieval to one FS.
-- Manage storage: “Хранилище” lists via `storage.list_documents()`; preview uses `storage.read_markdown()`; delete uses `storage.delete_document()`.
-
-## Conventions and patterns
-- Tabs expose `get_layout()` + `register_callbacks(app, ...)`. Keep state in `dcc.Store`; mirror busy flags to button props.
-- Component IDs for row actions are dicts (e.g., `{type:"view-btn", section:title}`); resolve with `callback_context.triggered_id`.
-- Markdown rendered with `dcc.Markdown` within `dmc.TypographyStylesProvider` (see `assets/fs_analyze_ui.css`).
-- RAG settings set once in `configure_settings()`; default Gemini models; local HF alternative in `configure_settings_local()`.
-- Retrieval filter: LlamaIndex `MetadataFilters([{key:"file_name", value: name, operator: EQ}])`.
-- Sources include `file_name`, `score`, snippet text; JSON from `search_documents()` is `{"answer": str, "sources": list}`.
+- Python app (Dash + LlamaIndex + ChromaDB) to analyze functional specs/docs.
+- Ingestion converts attachments (mostly .docx) to Markdown and indexes content.
+- Images from .docx are extracted to disk and referenced via HTTP for the UI.
 
 ## Key files
-- `app.py`, `rag_engine.py`, `storage.py`, `md_reader.py`, `fs_analyze_agent.py`, `fs_analyze_ui.py`, `fs_chat_ui.py`, `fs_storage_ui.py`, `db.py`, `fs_analyze/*`.
 
-## Examples
-- Scoped search: `await search_documents("Вопрос", file_name="Some.docx")`.
-- Programmatic ingest: `add_docx_to_store(Path("./attachments/Foo.docx"))`.
-- Full delete: `delete_document("Foo.docx")` → removes vectors + md + original.
+- `storage.py` — builds/loads vector store and index; orchestrates ingestion and markdown persistence.
+- `md_reader.py` — MarkItDown-based reader with DOCX image extraction and Markdown link rewrite.
+- `app.py` — Dash app and Flask route to serve `/markdown_assets/<stem>/<file>`.
+- `requirements.txt` / `_requirements.txt` — dependencies.
+- `data/markdown/` — persisted Markdown; `data/markdown_assets/` — extracted images.
 
-Notes
-- No test suite yet (VS Code task exists for `pytest -q`). Lint with ruff; follow existing typing and structlog usage.
-- If conventions drift (new tabs, envs), update this file in the same concise style (≈20–50 lines).
+## Ingestion + images (rules)
+
+- Use `MarkItDownReader` from `md_reader.py` for `.docx`/`.xlsx`.
+- Extract images from DOCX zip (`word/media/*`) to `data/markdown_assets/<doc-stem>/` with SHA256-based dedupe.
+- Rewrite Markdown `![](data:image/...)` to HTTP URLs: `/markdown_assets/<stem>/<filename>`.
+- The app must serve these via the Flask route in `app.py`.
+- Do not embed base64 images in Markdown for the UI; always rewrite to file-backed links.
+
+## Metadata constraints
+
+- LlamaIndex/Chroma metadata must be scalar: `str | int | float | None`.
+- If you need to store lists/objects, serialize to JSON string (e.g., `images_saved`), and add numeric helpers (e.g., `images_count`).
+
+## Environment variables
+
+- `DATA_PATH` (default: `./data`)
+- `CHROMA_PATH` (default: `./data/chroma_db`)
+- `CHROMA_COLLECTION` (default: `knowledge_base`)
+- `MD_DIR` (default: `./data/markdown`)
+- `MD_SAVE_IMAGES` (default: `1` to enable extraction)
+- `MD_IMG_DIR` (default: `./data/markdown_assets`)
+
+## Implementation guidance
+
+- Prefer small, targeted changes; keep public behavior/backwards-compat.
+- Preserve `md_reader.py` helpers: `_extract_docx_images`, `_rewrite_md_data_uri_placeholders`, `_process_docx_images`.
+- Keep URL shape stable: `/markdown_assets/<stem>/<filename>`.
+- When adding new formats, mirror the DOCX flow: extract assets, persist, rewrite links, and serve via the static route.
+- Gracefully handle missing files and unknown image types; skip rather than crash.
+
+## UI serving
+
+- The Flask route in `app.py` is the single source of truth for asset serving. If you change paths, update both the route and Markdown rewrite logic.
+
+## Testing/checks
+
+- Prefer fast, minimal checks. If adding code that changes public behavior, add a small test (pytest) where feasible.
+- Honor the `pytest -q` task if tests are present.
+
+## Common pitfalls
+
+- Don’t store non-scalars in metadata.
+- Don’t create file-system relative links in Markdown that aren’t served by HTTP.
+- Avoid noisy regex; account for wrappers like bold around images when rewriting.
+
+## Docs-first via Context7 (MCP)
+
+When a question or task involves a third-party library, framework, SDK, or API:
+
+- Always fetch up-to-date docs using the MCP server **context7** before proposing code.
+- Procedure:
+  1. Detect the target library and version from the repo (e.g., package.json, pyproject.toml, requirements.txt, go.mod, Cargo.toml).
+  2. Call `resolve-library-id` with `libraryName` for the target.
+  3. Call `get-library-docs` for the resolved ID (and version if available).
+  4. Ground explanations and code examples strictly in the fetched docs.
+- If docs cannot be retrieved, explicitly say so and continue with best-effort, marking the answer with: `Docs: not found in Context7`.
+- Prefer examples that match this stack: TypeScript/React/Next.js and Python (FastAPI) unless the user states otherwise.
+- At the end of the answer, include a brief note: `Docs: <lib>@<version> via Context7`.
+
+Do not rely on model memory or generic web snippets for APIs if Context7 docs were retrieved.
+
+## Nice-to-have next
+
+- Optional EMF/WMF → PNG conversion during extraction for better browser support (only if needed).
