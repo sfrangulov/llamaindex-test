@@ -452,7 +452,7 @@ def _render_table(rows: List[Dict[str, Any]]):
         status_btn = (
             dmc.Button("НАЙДЕН", color="green", variant="light",
                        id={"type": "view-btn", "section": r.get(COL_SECTION)})
-            if ok else dmc.Button("НЕ НАЙДЕН", color="red", variant="light", disabled=True)
+            if ok else dmc.Button("НЕ НАЙДЕН", color="red", variant="light")
         )
         overall_text = (r.get(COL_OVERALL) or "")
         if not overall_text or overall_text == "—":
