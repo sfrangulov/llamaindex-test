@@ -68,17 +68,6 @@ query_template = (
     "Вопрос пользователя:\n{query_str}\n\n"
 )
 
-# Follow-up → standalone query using chat history from Memory
-condense_followup_template = (
-    "Ты переписываешь текущий вопрос пользователя в самостоятельный, используя историю беседы.\n"
-    "Требования:\n"
-    "- Отвечай на том же языке, что и вопрос.\n"
-    "- Сохрани смысл, подставь опущенные сущности (разреши местоимения).\n"
-    "- Верни только переформулированный вопрос, без пояснений и кавычек.\n\n"
-    "История (последние ходы):\n{history}\n\n"
-    "Текущий вопрос:\n{question}\n\n"
-)
-
 # Follow-up → standalone query using chat history
 condense_followup_template = (
     "Ты переписываешь текущий вопрос пользователя в самостоятельный, используя историю беседы.\n"
@@ -235,14 +224,16 @@ def _ensure_agent() -> FunctionAgent | None:
         return AGENT
 
     async def _kb_search_tool(query: str, file_name: str | None = None) -> str:
-        """Tool: run the RAG pipeline and return strict JSON string."""
-        # Resolve follow-ups using chat history
-        q = await _condense_followup(query)
+        """Tool: run the RAG pipeline and return strict JSON string.
+
+        Assumes the incoming query is already condensed if needed. Do not re-condense here
+        to avoid double transformations and confusing logs.
+        """
         try:
-            log.debug("kb_search", original=query, condensed=q, file_name=file_name)
+            log.debug("kb_search_tool_in", query=query, file_name=file_name)
         except Exception:
             pass
-        payload = await _run_rag_workflow(q, file_name)
+        payload = await _run_rag_workflow(query, file_name)
         return json.dumps(payload, ensure_ascii=False)
 
     try:
@@ -286,6 +277,7 @@ async def _condense_followup(question: str, max_turns: int = 12) -> str:
     if mem is None:
         return question
     try:
+        log.debug("condense_followup_start", question=question)
         msgs = await mem.aget()
         if not msgs:
             return question
@@ -303,9 +295,12 @@ async def _condense_followup(question: str, max_turns: int = 12) -> str:
         if candidate:
             if candidate.startswith(('"', "'")) and candidate.endswith(('"', "'")) and len(candidate) > 1:
                 candidate = candidate[1:-1].strip()
+            log.debug("condense_followup_done", original=question, condensed=candidate)
             return candidate or question
+        log.debug("condense_followup_nochange", question=question)
         return question
-    except Exception:
+    except Exception as e:
+        log.exception("Error during follow-up condensation", error=e)
         return question
 
 
@@ -443,6 +438,10 @@ async def search_documents(
         condensed_query = await _condense_followup(query)
     except Exception:
         condensed_query = query
+    try:
+        log.debug("search_documents_query", original=query, condensed=condensed_query, file_name=file_name)
+    except Exception:
+        pass
     agent = _ensure_agent()
     result: Dict[str, Any]
     if agent is not None:
