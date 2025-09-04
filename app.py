@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 import dash
+from flask import send_from_directory, abort
 from dash import Input, Output
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
@@ -92,6 +93,17 @@ def create_app() -> dash.Dash:
         dmc.AppShell(children=[header, main], header={"height": 60}, padding="md"),
         theme=THEME,
     )
+
+    # Static route for markdown image assets
+    img_root = os.getenv("MD_IMG_DIR", "./data/markdown_assets")
+
+    @app.server.route('/markdown_assets/<path:filename>')
+    def _serve_markdown_asset(filename):  # type: ignore
+        try:
+            print(f"Serving markdown asset: {filename}")
+            return send_from_directory(img_root, filename)
+        except Exception:
+            abort(404)
 
     # Register callbacks from individual tabs
     analyze_register_callbacks(app)

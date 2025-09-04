@@ -17,3 +17,12 @@ html[data-mantine-color-scheme="dark"] div.markdown tr:nth-child(odd) {
 html[data-mantine-color-scheme="dark"] div.markdown td {
   border: 1px #424242 solid;
 }
+
+html[data-mantine-color-scheme="light"] div.markdown img {
+  border: 1px #dee2e6 solid;
+}
+
+
+html[data-mantine-color-scheme="dark"] div.markdown img {
+  border: 1px #424242 solid;
+}
