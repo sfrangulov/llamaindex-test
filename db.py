@@ -9,20 +9,14 @@ This module is thread-safe for simple use: it opens a new connection per call.
 
 from __future__ import annotations
 
-import os
 import json
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 DB_PATH = Path("./data/results.db")
-
-
-def _ensure_data_dir() -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _connect() -> sqlite3.Connection:

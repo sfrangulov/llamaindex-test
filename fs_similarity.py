@@ -5,7 +5,6 @@ from llama_index.core import Settings
 
 from fs_utils import get_fs
 from storage import CFG, list_storage_files, read_markdown
-from rag_engine import configure_settings
 
 
 SUBJECT_SECTION_TITLE = "Предмет разработки"
