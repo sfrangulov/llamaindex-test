@@ -29,7 +29,6 @@ def _embed_texts(texts: List[str]) -> List[np.ndarray]:
 
     Falls back across common LlamaIndex APIs to stay compatible.
     """
-    configure_settings()
     em = Settings.embed_model
     if not texts:
         return []

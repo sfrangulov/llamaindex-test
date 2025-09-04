@@ -26,13 +26,12 @@ def _ensure_data_dir() -> None:
 
 
 def _connect() -> sqlite3.Connection:
-    _ensure_data_dir()
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 
-def init_results_db() -> None:
+def start() -> None:
     """Initialize database schema if not present."""
     with _connect() as conn:
         cur = conn.cursor()

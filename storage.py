@@ -75,8 +75,6 @@ def get_index() -> VectorStoreIndex:
     if _index is not None:
         return _index
 
-    ensure_dirs()
-
     collection =_get_chroma_collection()
     if collection.count() == 0:
         documents = load_documents()
@@ -101,7 +99,6 @@ def list_storage_files(search: str | None = None) -> list[dict]:
     Returns a list of dicts with keys: file_name, file_path, size_bytes, uploaded_at_iso.
     """
     base = CFG.data_path
-    ensure_dirs()
     results: list[dict] = []
     try:
         for p in base.rglob("*.docx"):
@@ -173,7 +170,6 @@ def add_docx_to_store(file: Path, *, persist_original: bool = True, target_file_
     If vectors for the same file_name exist, they are removed before insert to avoid duplicates.
     Returns a short dict summary with file_name and bytes.
     """
-    ensure_dirs()
     reader = MarkItDownReader()
     docs = reader.load_data(Path(file))
     if not docs:
@@ -229,7 +225,6 @@ def add_docx_to_store(file: Path, *, persist_original: bool = True, target_file_
 
 def read_markdown(file_name: str) -> str:
     """Read markdown text for a given DOCX file_name (expects <name>.docx.md)."""
-    ensure_dirs()
     md_path = CFG.md_dir / f"{file_name}.md"
     try:
         with open(md_path, "r", encoding="utf-8") as f:
@@ -251,7 +246,6 @@ def delete_document(file_name: str) -> dict:
 
     Returns a dict summary: {"file_name", "vectors_deleted", "file_deleted", "md_deleted"}
     """
-    ensure_dirs()
     vectors_deleted = 0
     file_deleted = False
     md_deleted = False

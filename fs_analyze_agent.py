@@ -1,13 +1,12 @@
 from rag_engine import configure_settings
 import re
-import os
 import json
 from typing import Any, Dict, Callable, Optional
 from llama_index.core import Settings
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core.memory import Memory
 from llama_index.core.tools import FunctionTool
-from fs_utils import SECTION_TITLES, get_fs
+from fs_utils import SECTION_TITLES
 
 import structlog
 log = structlog.get_logger(__name__)
@@ -42,7 +41,7 @@ def split_by_sections_questions(text):
     return sections
 
 
-def warmup():
+def start():
     global DEV_STANDARDS, FS_QUESTIONS, FS_TEMPLATE
     configure_settings()
     with open("./fs_analyze/dev_standards.md", "r") as f:
@@ -63,7 +62,6 @@ def _ensure_agent() -> FunctionAgent:
     global AGENT, MEMORY
     if AGENT is not None:
         return AGENT
-    configure_settings()
     # Bounded memory so context doesn't explode across many sections
     try:
         MEMORY = Memory.from_defaults(token_limit=4000)
@@ -182,13 +180,6 @@ def analyze_fs_sections(
         'overall_assessment': str,  # один из: "Полностью соответствует" | "Частично соответствует" | "Не соответствует"
     }
     """
-    # Ensure settings and questions are ready
-    if not isinstance(FS_QUESTIONS, dict) or not FS_QUESTIONS:
-        try:
-            warmup()
-        except Exception:
-            pass
-    configure_settings()
 
     results: dict[str, Dict[str, Any]] = {}
     total = len(SECTION_TITLES)
@@ -267,12 +258,3 @@ def analyze_fs_sections(
 
     return results
 
-
-if __name__ == "__main__":
-    warmup()
-    stats = {}
-    files = os.listdir("./data/markdown/")
-    for fname in files:
-        fs_sections = get_fs(f"./data/markdown/{fname}")
-        stats[len(fs_sections)] = stats.get(len(fs_sections), 0) + 1
-    log.info("FS sections stats", total=len(files), stats=stats)

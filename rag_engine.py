@@ -30,6 +30,8 @@ from llama_index.core.vector_stores.types import (
     FilterOperator,
 )
 
+from storage import ensure_dirs
+
 import structlog
 log = structlog.get_logger(__name__)
 
@@ -175,8 +177,6 @@ class RagWorkflow(Workflow):
         if not query:
             # immediately stop with empty result
             return StopEvent(result={"answer": "", "sources": []})
-        # Ensure settings/index are ready before retrieval
-        configure_settings()
         _ = get_index()
         return QueryEvent(query=query, file_name=file_name)
 
@@ -272,10 +272,11 @@ async def search_documents(
 
 
 # ----------------------------- Warmup helpers -----------------------------
-def warmup(
+def start(
     *, ensure_index: bool = True
 ) -> None:
     """Warm heavy parts to reduce first-request latency."""
+    ensure_dirs()
     configure_settings()
     if ensure_index:
         try:
