@@ -100,7 +100,6 @@ def create_app() -> dash.Dash:
     @app.server.route('/markdown_assets/<path:filename>')
     def _serve_markdown_asset(filename):  # type: ignore
         try:
-            print(f"Serving markdown asset: {filename}")
             return send_from_directory(img_root, filename)
         except Exception:
             abort(404)
