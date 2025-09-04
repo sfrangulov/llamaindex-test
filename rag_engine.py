@@ -68,6 +68,28 @@ query_template = (
     "Вопрос пользователя:\n{query_str}\n\n"
 )
 
+# Follow-up → standalone query using chat history from Memory
+condense_followup_template = (
+    "Ты переписываешь текущий вопрос пользователя в самостоятельный, используя историю беседы.\n"
+    "Требования:\n"
+    "- Отвечай на том же языке, что и вопрос.\n"
+    "- Сохрани смысл, подставь опущенные сущности (разреши местоимения).\n"
+    "- Верни только переформулированный вопрос, без пояснений и кавычек.\n\n"
+    "История (последние ходы):\n{history}\n\n"
+    "Текущий вопрос:\n{question}\n\n"
+)
+
+# Follow-up → standalone query using chat history
+condense_followup_template = (
+    "Ты переписываешь текущий вопрос пользователя в самостоятельный, используя историю беседы.\n"
+    "Требования:\n"
+    "- Отвечай на том же языке, что и вопрос.\n"
+    "- Сохрани смысл, подставь опущенные сущности (разреши местоимения: он/она/это и т.п.).\n"
+    "- Верни только переформулированный вопрос, без пояснений и кавычек.\n\n"
+    "История (последние ходы):\n{history}\n\n"
+    "Текущий вопрос:\n{question}\n\n"
+)
+
 # Tunables
 TOP_K = int(os.getenv("TOP_K", 10))
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
@@ -214,7 +236,13 @@ def _ensure_agent() -> FunctionAgent | None:
 
     async def _kb_search_tool(query: str, file_name: str | None = None) -> str:
         """Tool: run the RAG pipeline and return strict JSON string."""
-        payload = await _run_rag_workflow(query, file_name)
+        # Resolve follow-ups using chat history
+        q = await _condense_followup(query)
+        try:
+            log.debug("kb_search", original=query, condensed=q, file_name=file_name)
+        except Exception:
+            pass
+        payload = await _run_rag_workflow(q, file_name)
         return json.dumps(payload, ensure_ascii=False)
 
     try:
@@ -247,6 +275,38 @@ def _ensure_agent() -> FunctionAgent | None:
     except Exception:
         AGENT = None
     return AGENT
+
+
+async def _condense_followup(question: str, max_turns: int = 12) -> str:
+    """Rewrite a follow-up into a standalone query using Memory history.
+
+    If memory/history is empty or condensation fails, return the original question.
+    """
+    mem = _ensure_memory()
+    if mem is None:
+        return question
+    try:
+        msgs = await mem.aget()
+        if not msgs:
+            return question
+        lines: list[str] = []
+        for m in msgs[-max_turns:]:
+            role = getattr(m, "role", None) or "user"
+            content = str(getattr(m, "content", "")).strip()
+            if not content:
+                continue
+            lines.append(f"[{role}] {content}")
+        history = "\n".join(lines)
+        prompt = PromptTemplate(condense_followup_template).format(history=history, question=question)
+        resp = await Settings.llm.acomplete(prompt)
+        candidate = (getattr(resp, "text", None) or "").strip()
+        if candidate:
+            if candidate.startswith(('"', "'")) and candidate.endswith(('"', "'")) and len(candidate) > 1:
+                candidate = candidate[1:-1].strip()
+            return candidate or question
+        return question
+    except Exception:
+        return question
 
 
 # ---------------------------- Workflow Events ----------------------------
@@ -378,12 +438,17 @@ async def search_documents(
 ) -> str:
     """Search and return JSON answer + sources using a Workflow pipeline."""
     t0 = time.time()
+    # Condense follow-up so ellipses/pronouns are resolved using Memory
+    try:
+        condensed_query = await _condense_followup(query)
+    except Exception:
+        condensed_query = query
     agent = _ensure_agent()
     result: Dict[str, Any]
     if agent is not None:
         try:
             # Let the agent manage memory; pass file_name hint inline if present
-            user_query = query if not file_name else f"{query}\n\n[file_name={file_name}]"
+            user_query = condensed_query if not file_name else f"{condensed_query}\n\n[file_name={file_name}]"
             resp = await agent.run(user_query, memory=_ensure_memory())
             txt = _resp_text(resp)
             data = json.loads((txt or "").strip() or "{}")
@@ -391,12 +456,12 @@ async def search_documents(
                 result = data
             else:
                 # Fallback to direct RAG if agent returned unexpected format
-                result = await _run_rag_workflow(query, file_name)
+                result = await _run_rag_workflow(condensed_query, file_name)
         except Exception as e:
             log.warning("agent_run_failed", error=e)
-            result = await _run_rag_workflow(query, file_name)
+            result = await _run_rag_workflow(condensed_query, file_name)
     else:
-        result = await _run_rag_workflow(query, file_name)
+        result = await _run_rag_workflow(condensed_query, file_name)
 
     latency = int(time.time() - t0)
     log.debug("Workflow done.", query=query, latency=latency, answer=result.get("answer", "")[:50],
