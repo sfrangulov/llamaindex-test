@@ -54,6 +54,21 @@ def start():
     _ensure_agent()
 
 
+def _mark_missing_section(title: str, results: dict[str, Dict[str, Any]], done: int, total: int, progress_cb: Optional[Callable[[int, int, str], None]]) -> int:
+    details = (
+        f"### {title}\n\n"
+        f"Раздел отсутствует в документе. Проверьте, что он добавлен согласно шаблону ФС."
+    )
+    results[title] = {"ok": False, "details_markdown": details}
+    done += 1
+    try:
+        if progress_cb:
+            progress_cb(done, total, title)
+    except Exception:
+        pass
+    return done
+
+
 def _ensure_agent() -> FunctionAgent:
     """Initialize and cache a FunctionAgent with Memory.
 
@@ -79,7 +94,7 @@ def _ensure_agent() -> FunctionAgent:
     def _tool_get_standards(_: str = "") -> str:
         log.debug("Getting DEV standards")
         return DEV_STANDARDS or ""
-    
+
     def _tool_get_template(_: str = "") -> str:
         log.debug("Getting FS template")
         return FS_TEMPLATE or ""
@@ -87,9 +102,12 @@ def _ensure_agent() -> FunctionAgent:
     tools: list[FunctionTool] = []
     try:
         tools = [
-            FunctionTool.from_defaults(fn=_tool_get_questions, name="get_fs_questions", description="Вернуть контрольные вопросы для указанного раздела ФС."),
-            FunctionTool.from_defaults(fn=_tool_get_standards, name="get_dev_standards", description="Вернуть стандарты разработки для справки при анализе."),
-            FunctionTool.from_defaults(fn=_tool_get_template, name="get_fs_template", description="Вернуть шаблон функциональной спецификации для справки при анализе."),
+            FunctionTool.from_defaults(fn=_tool_get_questions, name="get_fs_questions",
+                                       description="Вернуть контрольные вопросы для указанного раздела ФС."),
+            FunctionTool.from_defaults(fn=_tool_get_standards, name="get_dev_standards",
+                                       description="Вернуть стандарты разработки для справки при анализе."),
+            FunctionTool.from_defaults(fn=_tool_get_template, name="get_fs_template",
+                                       description="Вернуть шаблон функциональной спецификации для справки при анализе."),
         ]
     except Exception:
         tools = []
@@ -116,33 +134,36 @@ def _ensure_agent() -> FunctionAgent:
     return AGENT
 
 
+def _resp_text(res: object) -> str:
+    """Extract text from common LlamaIndex agent/LLM responses."""
+    if res is None:
+        return ""
+    if isinstance(res, str):
+        return res
+    # Prefer common attributes in order
+    for attr in ("output", "text", "message", "response"):
+        val = getattr(res, attr, None)
+        if isinstance(val, str):
+            return val
+        if getattr(val, "text", None):
+            return str(getattr(val, "text"))
+    return str(res)
+
+
 def _agent_complete(prompt: str) -> str:
     """Try to complete via FunctionAgent; fallback to raw LLM on failure."""
     try:
         agent = _ensure_agent()
         if agent is not None:
-            # Try common call surfaces across versions
-            if hasattr(agent, "chat"):
-                res = agent.chat(prompt)  # may return str or obj
-                if isinstance(res, str):
-                    return res
-                # Try common attributes
-                txt = getattr(res, "message", None) or getattr(res, "response", None) or getattr(res, "text", None)
-                if hasattr(txt, "text"):
-                    txt = getattr(txt, "text", None)
-                if txt is not None:
-                    return str(txt)
             if hasattr(agent, "run"):
-                res = agent.run(prompt)
-                txt = getattr(res, "output", None) or getattr(res, "text", None) or (str(res) if res is not None else None)
-                if txt is not None:
-                    return str(txt)
+                return _resp_text(agent.run(prompt))
+            if hasattr(agent, "chat"):
+                return _resp_text(agent.chat(prompt))
     except Exception as e:
         log.warning("agent_complete_failed", error=e)
     # Hard fallback to raw LLM
     try:
-        resp = Settings.llm.complete(prompt)
-        return getattr(resp, "text", "") or str(resp)
+        return _resp_text(Settings.llm.complete(prompt))
     except Exception:
         return ""
 
@@ -190,20 +211,8 @@ def analyze_fs_sections(
 
         # If no section text found, mark as missing
         if not content:
-            details = (
-                f"### {title}\n\n"
-                f"Раздел отсутствует в документе. Проверьте, что он добавлен согласно шаблону ФС."
-            )
-            results[title] = {
-                "ok": False,
-                "details_markdown": details,
-            }
-            done += 1
-            try:
-                if progress_cb:
-                    progress_cb(done, total, title)
-            except Exception:
-                pass
+            done = _mark_missing_section(
+                title, results, done, total, progress_cb)
             continue
 
         if not questions_md:
@@ -226,11 +235,10 @@ def analyze_fs_sections(
             "Требования к краткости: пиши очень кратко и по делу."
         )
         try:
-            # resp = Settings.llm.complete(prompt)
-            # data = _parse_json_loose(getattr(resp, "text", ""))
             text = _agent_complete(prompt)
             data = _parse_json_loose(text)
-            log.debug("Analyzing FS section", section=title, prompt=prompt, data=data)
+            log.debug("Analyzing FS section", section=title,
+                      prompt=prompt, data=data)
         except Exception as e:
             log.warning("Section analysis failed", section=title, error=e)
             data = {}
@@ -257,4 +265,3 @@ def analyze_fs_sections(
             pass
 
     return results
-

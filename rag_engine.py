@@ -207,10 +207,12 @@ class RagWorkflow(Workflow):
         if ev.file_name:
             filters = MetadataFilters(
                 filters=[
-                    MetadataFilter(key="file_name", value=ev.file_name, operator=FilterOperator.EQ),
+                    MetadataFilter(
+                        key="file_name", value=ev.file_name, operator=FilterOperator.EQ),
                 ]
             )
-            retriever = idx.as_retriever(similarity_top_k=TOP_K, filters=filters)
+            retriever = idx.as_retriever(
+                similarity_top_k=TOP_K, filters=filters)
         else:
             retriever = idx.as_retriever(similarity_top_k=TOP_K)
         nodes = await retriever.aretrieve(ev.rag_query)

@@ -79,7 +79,8 @@ def _rewrite_md_data_uri_placeholders(text: str, saved_files: list[str], link_di
                 path = str(link_dir / fn)
             else:
                 path = fn
-        return f"{prefix}![](<http://127.0.0.1:7861{path}>){suffix}"
+        # Use Flask-served relative URL, no host/port hardcode
+        return f"{prefix}![](<{path}>){suffix}"
 
     return pattern.sub(_repl, text)
 
@@ -98,7 +99,8 @@ def _process_docx_images(src_file: Path, text: str) -> tuple[str, Optional[Path]
     # Fallback relative path (if needed elsewhere)
     md_dir = Path(os.getenv("MD_DIR", "./data/markdown")).resolve()
     link_dir = Path(os.path.relpath(out_dir.resolve(), start=md_dir))
-    new_text = _rewrite_md_data_uri_placeholders(text, saved_files, link_dir, url_base)
+    new_text = _rewrite_md_data_uri_placeholders(
+        text, saved_files, link_dir, url_base)
     return new_text, out_dir, saved_files
 
 
@@ -130,9 +132,11 @@ class MarkItDownReader(BaseReader):
 
         # Optional: extract images from DOCX into files and rewrite placeholders
         try:
-            text_content, out_dir, saved_files = _process_docx_images(file, text_content)
+            text_content, out_dir, saved_files = _process_docx_images(
+                file, text_content)
         except Exception as e:
-            log.warning("docx_image_extraction_failed", file=str(file), error=e)
+            log.warning("docx_image_extraction_failed",
+                        file=str(file), error=e)
 
         # Build metadata
         metadata: Dict[str, Any] = {
@@ -161,10 +165,12 @@ class MarkItDownReader(BaseReader):
                 metadata["image_dir"] = str(out_dir)
                 # saved_files may not exist if branch skipped
                 if "saved_files" in locals():
-                    image_paths = [str(out_dir / fn) for fn in (saved_files or [])]
+                    image_paths = [str(out_dir / fn)
+                                   for fn in (saved_files or [])]
                     metadata["images_count"] = len(image_paths)
                     # store as JSON string to satisfy scalar-only metadata constraints
-                    metadata["images_saved"] = json.dumps(image_paths, ensure_ascii=False)
+                    metadata["images_saved"] = json.dumps(
+                        image_paths, ensure_ascii=False)
         except Exception:
             pass
 

@@ -110,7 +110,7 @@ def _build_compare_prompt(base_text: str, cand_text: str) -> str:
         "1) Схожи: <кратко по сути>\n"
         "2) Отличаются: <кратко по сути>\n"
         "Пиши на русском, без воды, без Markdown, без лишних пояснений.\n\n"
-        f"Текст первой ФС:\n{base}\n\nТекст второй ФС:\n{cand}\n"
+        f"Текст A:\n{base}\n\nТекст B:\n{cand}\n"
     )
 
 
