@@ -52,6 +52,13 @@ def _render_table(rows: List[Dict[str, Any]]):
             ),
             label=name,
         )
+        analyze_btn = dmc.Button(
+            "Анализировать",
+            id={"type": "stg-analyze-doc", "file": name},
+            color="blue",
+            variant="light",
+            size="xs",
+        )
         del_btn = dmc.Button(
             "Удалить",
             id={"type": "stg-delete-doc", "file": name},
@@ -61,10 +68,10 @@ def _render_table(rows: List[Dict[str, Any]]):
         )
         body_rows.append(dmc.TableTr([
             dmc.TableTd(str(i)),
-            dmc.TableTd(name_btn, maw=360),
+            dmc.TableTd(name_btn, maw=640),
             dmc.TableTd(size),
             dmc.TableTd(ts or "—"),
-            dmc.TableTd(dmc.Group([del_btn], gap="xs")),
+            dmc.TableTd(dmc.Group([analyze_btn, del_btn], gap="xs")),
         ]))
     body = dmc.TableTbody(body_rows)
     return dmc.Table(highlightOnHover=True, striped=True, verticalSpacing="sm", horizontalSpacing="md", children=[header, body])
@@ -259,3 +266,38 @@ def register_callbacks(app: dash.Dash):
             return False, msg, color, rows, table
         except Exception as e:
             return False, f"Ошибка удаления: {e}", "red", dash.no_update, dash.no_update
+
+    # Jump to Analysis section and load selected file
+    @app.callback(
+        Output("top-nav", "value"),
+        Output("current-file-name", "data", allow_duplicate=True),
+        Output("main-tabs", "value"),
+        Input({"type": "stg-analyze-doc", "file": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def on_analyze_from_storage(clicks):
+        try:
+            if not clicks or all(((c or 0) <= 0) for c in clicks):
+                return dash.no_update, dash.no_update, dash.no_update
+            ctx = callback_context
+            tid = getattr(ctx, "triggered_id", None)
+            fname = None
+            if isinstance(tid, dict):
+                fname = tid.get("file")
+            else:
+                trig = getattr(ctx, "triggered", []) or []
+                if trig:
+                    comp = (trig[0].get("prop_id", "").split(".") or [""])[0]
+                    if comp.startswith("{"):
+                        import json as _json
+                        try:
+                            d = _json.loads(comp)
+                            fname = d.get("file")
+                        except Exception:
+                            fname = None
+            if not fname:
+                return dash.no_update, dash.no_update, dash.no_update
+            # Switch top-level section to Analysis and inner tab to Analysis panel
+            return "analysis", fname, "analysis"
+        except Exception:
+            return dash.no_update, dash.no_update, dash.no_update

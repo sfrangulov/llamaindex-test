@@ -519,6 +519,24 @@ def _render_similar_table(rows: List[Dict[str, Any]]):
 
 def register_callbacks(app: dash.Dash):
     @app.callback(
+        Output("current-file", "children", allow_duplicate=True),
+        Output("sections-table-wrap", "children", allow_duplicate=True),
+        Output("sections-payload", "data", allow_duplicate=True),
+        Output("upload-status", "children", allow_duplicate=True),
+        Output("upload-status", "color", allow_duplicate=True),
+        Input("current-file-name", "data"),
+        prevent_initial_call=True,
+    )
+    def on_current_file_set(file_name):
+        try:
+            if not file_name:
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            rows, payload = _build_sections_table(file_name)
+            table = _render_table(rows)
+            return file_name, table, payload, f"Выбран файл: {file_name}", "blue"
+        except Exception:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    @app.callback(
         Output("upload-status", "children"),
         Output("upload-status", "color"),
         Output("current-file", "children"),
