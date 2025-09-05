@@ -420,7 +420,6 @@ def register_callbacks(app: dash.Dash):
                 dmc.TableTh("#"),
                 dmc.TableTh("Раздел"),
                 dmc.TableTh("Оценка"),
-                dmc.TableTh("Детали"),
             ]))
             body_rows = []
             for i, (title, payload) in enumerate(sections.items(), start=1):
@@ -433,20 +432,20 @@ def register_callbacks(app: dash.Dash):
                         color = "orange"
                     else:
                         color = "red"
-                    overall_cell = dmc.Badge(overall, color=color, variant="light")
+                    # Make rating clickable to open details
+                    overall_cell = dmc.Button(
+                        overall,
+                        id={"type": "stg-view-section-details", "file": fname, "section": title},
+                        color=color,
+                        variant="light",
+                        size="xs",
+                    )
                 else:
                     overall_cell = dmc.Text("—")
-                details_btn = dmc.Button(
-                    "Открыть",
-                    id={"type": "stg-view-section-details", "file": fname, "section": title},
-                    size="xs",
-                    variant="light",
-                )
                 body_rows.append(dmc.TableTr([
                     dmc.TableTd(str(i)),
                     dmc.TableTd(title),
                     dmc.TableTd(overall_cell),
-                    dmc.TableTd(details_btn),
                 ]))
             table = dmc.Table(highlightOnHover=True, striped=True, verticalSpacing="sm", horizontalSpacing="md", children=[header, dmc.TableTbody(body_rows)])
             return True, f"Оценки разделов — {fname}", table
