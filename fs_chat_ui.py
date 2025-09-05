@@ -7,6 +7,7 @@ import dash
 from dash import dcc, html, Input, Output, State, clientside_callback
 import dash_mantine_components as dmc
 from storage import read_markdown
+from rag_engine import reset_memory
 
 
 def _render_chat_messages(history: List[Dict[str, Any]] | None) -> List[Any]:
@@ -186,22 +187,11 @@ def register_callbacks(app: dash.Dash, search_documents):
             history = list(history or [])
             history.append({"role": "user", "text": q})
 
-            # Build conversational context for the model (compact, last 6 turns)
-            turns = []
-            for m in history[-12:]:
-                r = m.get("role")
-                t = (m.get("text") or "").strip()
-                if not r or not t:
-                    continue
-                turns.append(f"[{r}] {t}")
-            conv = "\n".join(turns[-12:])
-            conv_query = f"Контекст беседы (кратко):\n{conv}\n\nТекущий вопрос: {q}"
-
             # Scope by file if requested and available
             kwargs: Dict[str, Any] = {}
 
             import asyncio
-            raw = asyncio.run(search_documents(conv_query, **kwargs))
+            raw = asyncio.run(search_documents(q, **kwargs))
             payload = json.loads(raw or "{}")
             answer = (payload.get("answer") or "").strip()
             sources = payload.get("sources") or []
@@ -243,6 +233,11 @@ def register_callbacks(app: dash.Dash, search_documents):
     def on_clear(n):
         if not n:
             return dash.no_update
+        try:
+            # Clear server-side chat memory as well
+            reset_memory()
+        except Exception:
+            pass
         return []
 
     # Open preview of a source document from chat
