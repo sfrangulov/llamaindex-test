@@ -120,7 +120,7 @@ def _enrich_with_ratings(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             total = int((latest or {}).get("sections_count") or (full + part + no))
             r["has_ratings"] = True
             r["ratings_summary"] = {"full": full, "part": part, "no": no, "total": total}
-            r["ratings_tooltip"] = f"П:{full} • Ч:{part} • Н:{no} из {total}"
+            r["ratings_tooltip"] = f"Полностью: {full} • Частично: {part} • Не соответствует: {no} Всего: {total}"
         except Exception:
             r["has_ratings"] = False
     return rows
