@@ -461,8 +461,11 @@ def register_callbacks(app: dash.Dash):
         Input({"type": "stg-view-section-details", "file": ALL, "section": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
-    def on_open_section_details(_clicks):
+    def on_open_section_details(clicks):
         try:
+            # Guard: only open on actual click
+            if not clicks or all(((c or 0) <= 0) for c in clicks):
+                return False, dash.no_update, dash.no_update
             ctx = callback_context
             tid = getattr(ctx, "triggered_id", None)
             if not isinstance(tid, dict):
